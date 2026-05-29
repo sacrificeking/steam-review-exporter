@@ -38,7 +38,7 @@ This project helps you to download Steam reviews for any game and export them di
 
 ## Usage
 
-### Option 1: Run via Command (Recommended)
+### Option 1: Interactive Mode
 After installation, you can run the tool from anywhere in your terminal:
 
 ```bash
@@ -66,6 +66,23 @@ Follow the on-screen prompts to:
     -   Enter a maximum character count (e.g., `500`) or press Enter for no limit.
 
 The tool will download the reviews and save an Excel file...
+
+### Option 2: Scriptable Command
+You can also run the exporter without prompts:
+
+```bash
+steam-review-exporter --app-id 588650 --language english --filter recent --min-len 100 --max-len 500 --output-dir exports
+```
+
+Available options:
+
+-   `--app-id`: Steam AppID.
+-   `--language`: Steam language, e.g. `english`, `german`, or `all`.
+-   `--filter`: One of `all`, `funny`, `recent`, or `updated`.
+-   `--min-len`: Minimum review length in characters.
+-   `--max-len`: Maximum review length in characters.
+-   `--output-dir`: Directory for the Excel export.
+-   `--verbose`: Enable debug logging.
 
 ---
 

@@ -8,6 +8,7 @@ class ReviewExportConfig(BaseModel):
     filter_type: Literal["all", "funny", "recent", "updated"] = "all"
     min_len: int = Field(0, ge=0, description="Minimum review length")
     max_len: Optional[int] = Field(None, gt=0, description="Maximum review length")
+    output_dir: Optional[str] = Field(None, min_length=1, description="Directory for exported Excel files")
 
     @field_validator("language")
     @classmethod

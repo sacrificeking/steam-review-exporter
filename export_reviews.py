@@ -1,12 +1,47 @@
+import argparse
 import requests
 import logging
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Literal, Sequence
 from steamreviews.utils import setup_logging
 from steamreviews.export import fetch_reviews, process_reviews, save_to_excel
 from steamreviews.models import ReviewExportConfig
 import pydantic
 
 logger = logging.getLogger(__name__)
+
+FilterType = Literal["all", "funny", "recent", "updated"]
+
+
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    """Parses command-line arguments."""
+    parser = argparse.ArgumentParser(description="Download Steam reviews and export them to Excel.")
+    parser.add_argument("--app-id", type=int, help="Steam AppID, e.g. 588650 for Dead Cells.")
+    parser.add_argument("--language", help="Steam review language, e.g. english, german, or all.")
+    parser.add_argument(
+        "--filter",
+        dest="filter_type",
+        choices=["all", "funny", "recent", "updated"],
+        default="all",
+        help="Steam review sorting/filter mode.",
+    )
+    parser.add_argument("--min-len", type=int, default=0, help="Minimum review length in characters.")
+    parser.add_argument("--max-len", type=int, help="Maximum review length in characters.")
+    parser.add_argument("--output-dir", help="Directory where the Excel file should be written.")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose debug logging.")
+    args = parser.parse_args(argv)
+    has_cli_config = any(
+        [
+            args.app_id is not None,
+            args.language is not None,
+            args.filter_type != "all",
+            args.min_len != 0,
+            args.max_len is not None,
+            args.output_dir is not None,
+        ]
+    )
+    if has_cli_config and (args.app_id is None or args.language is None):
+        parser.error("--app-id and --language are required when using command-line options.")
+    return args
 
 
 def get_app_id() -> int:
@@ -17,7 +52,7 @@ def get_app_id() -> int:
     return int(app_id_input)
 
 
-def get_processing_params() -> Tuple[str, str, int, Optional[int]]:
+def get_processing_params() -> Tuple[str, FilterType, int, Optional[int]]:
     """Queries processing parameters from the user."""
     language = input("Which language should the reviews be? (e.g. english or german):\n").strip().lower()
 
@@ -29,7 +64,7 @@ def get_processing_params() -> Tuple[str, str, int, Optional[int]]:
 
     filter_choice = input("Enter number (1-4) or press Enter for default: ").strip()
 
-    filter_map = {"1": "all", "2": "funny", "3": "recent", "4": "updated"}
+    filter_map: dict[str, FilterType] = {"1": "all", "2": "funny", "3": "recent", "4": "updated"}
     filter_type = filter_map.get(filter_choice, "all")
     print(f"Selected filter: {filter_type}\n")
 
@@ -48,7 +83,7 @@ def get_processing_params() -> Tuple[str, str, int, Optional[int]]:
 def get_game_name(app_id: int) -> str:
     """Fetches the game name from the Steam Store API."""
     try:
-        url = f"http://store.steampowered.com/api/appdetails?appids={app_id}"
+        url = f"https://store.steampowered.com/api/appdetails?appids={app_id}"
         response = requests.get(url, timeout=10)
         data = response.json()
 
@@ -73,19 +108,28 @@ def get_optional_int_input(prompt: str, default_value: Optional[int] = None) -> 
     return default_value
 
 
-def get_validated_config() -> ReviewExportConfig:
+def get_validated_config(args: Optional[argparse.Namespace] = None) -> ReviewExportConfig:
     """Queries user and returns a validated configuration object."""
-    # Initial parameters
-    app_id = get_app_id()
-    language, filter_type, min_len, max_len = get_processing_params()
+    if args is not None and args.app_id is not None and args.language is not None:
+        app_id = args.app_id
+        language = args.language
+        filter_type = args.filter_type
+        min_len = args.min_len
+        max_len = args.max_len
+        output_dir = args.output_dir
+    else:
+        app_id = get_app_id()
+        language, filter_type, min_len, max_len = get_processing_params()
+        output_dir = None
 
     try:
         config = ReviewExportConfig(
             app_id=app_id,
             language=language,
-            filter_type=filter_type,  # type: ignore
+            filter_type=filter_type,
             min_len=min_len,
             max_len=max_len,
+            output_dir=output_dir,
         )
         return config
     except pydantic.ValidationError as e:
@@ -93,11 +137,12 @@ def get_validated_config() -> ReviewExportConfig:
         raise
 
 
-def main():
-    setup_logging()
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    args = parse_args(argv)
+    setup_logging(verbose=args.verbose)
     try:
         # Initial parameters
-        config = get_validated_config()
+        config = get_validated_config(args)
 
         while True:
             game_name = get_game_name(config.app_id)
@@ -109,7 +154,14 @@ def main():
                 logger.info(f"Downloaded {len(reviews)} reviews. Processing data...")
                 df = process_reviews(reviews, config.app_id)
                 save_to_excel(
-                    df, config.app_id, game_name, config.language, config.filter_type, config.min_len, config.max_len
+                    df,
+                    config.app_id,
+                    game_name,
+                    config.language,
+                    config.filter_type,
+                    config.min_len,
+                    config.max_len,
+                    config.output_dir,
                 )
             else:
                 logger.warning(f"No reviews found for '{game_name}' (AppID {config.app_id}).")
@@ -131,6 +183,7 @@ def main():
                 filter_type=config.filter_type,
                 min_len=config.min_len,
                 max_len=config.max_len,
+                output_dir=config.output_dir,
             )
 
     except KeyboardInterrupt:

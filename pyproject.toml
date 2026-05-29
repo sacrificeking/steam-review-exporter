@@ -51,6 +51,9 @@ packages = ["steamreviews"]
 [tool.pytest.ini_options]
 testpaths = ["steamreviews/tests"]
 python_files = ["test_*.py"]
+markers = [
+    "integration: tests that call the live Steam API",
+]
 
 [tool.ruff]
 line-length = 120

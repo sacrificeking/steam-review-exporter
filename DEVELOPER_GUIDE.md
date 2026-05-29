@@ -1,99 +1,84 @@
-# Developer Guide 🧑‍💻
+# Developer Guide
 
-Welcome! This guide is designed for **beginners** who want to understand how this project works and how to modify it.
+This guide explains how the project is structured and how to run the local quality checks.
 
-## 🏗️ Project Architecture (How it fits together)
+## Project Architecture
 
-The project is split into two main parts: the **Library** (logic) and the **Script** (user interface).
+The project is split into two main parts:
+
+- `export_reviews.py`: command-line interface and user interaction.
+- `steamreviews/`: reusable library code for downloading, processing, and exporting reviews.
 
 ```mermaid
 graph TD
     User((User)) --> A[export_reviews.py]
-    A -->|Config & Validation| B[steamreviews Package]
-    
-    subgraph "steamreviews (The Logic)"
-        B -->|1. Validate Input| C[models.py]
-        B -->|2. Download Data| D[download_reviews.py]
-        B -->|3. Save File| E[export.py]
+    A -->|Config and validation| B[steamreviews package]
+
+    subgraph "steamreviews"
+        B --> C[models.py]
+        B --> D[download_reviews.py]
+        B --> E[export.py]
+        B --> F[utils.py]
     end
-    
-    D -->|Request| SteamAPI[Steam Servers]
-    D -->|Cache| Data[data/ Folder]
-    E -->|Write| ExcelFile[Excel .xlsx]
+
+    D -->|Requests| SteamAPI[Steam API]
+    D -->|Cache| Data[data folder]
+    E -->|Write| ExcelFile[Excel file]
 ```
 
-### Key Files Checklist
+## Key Files
 
-| File | Purpose | Difficulty |
-| :--- | :--- | :--- |
-| `export_reviews.py` | **Start Here**. The CLI (Command Line Interface). It asks the user for input. | ⭐ Easy |
-| `steamreviews/models.py` | **Rules**. Defines what inputs are valid (e.g. "AppID must be a number"). | ⭐ Easy |
-| `steamreviews/export.py` | **Processing**. Converts raw data into an Excel file. | ⭐⭐ Medium |
-| `steamreviews/download_reviews.py` | **The Engine**. Handles downloading from Steam, Rate-Limits, and Pagination. | ⭐⭐⭐ Hard |
-| `steamreviews/utils.py` | **Helper**. Sets up the colorful logging. | ⭐ Easy |
+| File | Purpose |
+| :--- | :--- |
+| `export_reviews.py` | CLI entry point. Supports interactive prompts and command-line arguments. |
+| `steamreviews/models.py` | Pydantic validation for export configuration. |
+| `steamreviews/download_reviews.py` | Steam API requests, pagination, rate-limit handling, and JSON cache. |
+| `steamreviews/export.py` | Review filtering, URL generation, Excel safety, and Excel export. |
+| `steamreviews/utils.py` | Logging setup. |
+| `steamreviews/tests/` | Unit, export, CLI, and integration tests. |
 
----
+## Setup
 
-## 🚀 Setting Up Your Dev Environment
-
-To change the code, you need a "Development Environment".
-
-### 1. Install Dependencies
-Instead of just running the tool, you need to install it with "developer extras" (like testing tools).
+Install the project with development dependencies:
 
 ```bash
-# In your terminal, run:
-python -m pip install .[dev]
+python -m pip install -e .[dev]
 ```
 
-*Note: The `[dev]` part tells pip to install `pytest`, `mypy`, and `ruff` from `pyproject.toml`.*
+## Fast Local Checks
 
-### 2. Run the Tests
-Before you change anything, make sure everything works!
+Run these before committing:
 
 ```bash
-python -m pytest
+python -m ruff check .
+python -m ruff format --check .
+python -m mypy .
+python -m pytest -m "not integration" --cov=steamreviews --cov-fail-under=60
 ```
-If you see **green**, you are good to go! ✅
 
----
+The fast test suite does not call the live Steam API.
 
-## 🛠️ How to Contribute
+## Integration Tests
 
-### Step 1: Make a clear change
-Don't try to change everything at once. Pick one file.
-*   *Example*: Add a new user prompt in `export_reviews.py`.
+Integration tests are marked with `integration` because they call the live Steam API.
+Run them explicitly when needed:
 
-### Step 2: Check your code
-We use two tools to keep the code clean ("State of the Art"):
-
-1.  **Ruff** (Checks style / formatting):
-    ```bash
-    python -m ruff check .
-    ```
-2.  **Mypy** (Checks types logic):
-    ```bash
-    python -m mypy .
-    ```
-
-### Step 3: Verify
-Run the tests again to ensure you didn't break anything.
 ```bash
-python -m pytest
+python -m pytest -m integration
 ```
 
----
+These tests use temporary working directories and should not delete local project data.
 
-## 🧠 Deep Dive: How Downloading Works
+## CLI Examples
 
-The complicated part is in `download_reviews.py`. Here is simple explanation of the logic:
+Interactive mode:
 
-1.  **Cursor System**: Steam doesn't give all 100,000 reviews at once. It gives 100 and a "Cursor" (a bookmark).
-2.  **The Loop**:
-    *   Ask Steam for reviews + cursor.
-    *   Save reviews.
-    *   Use new cursor to ask for the *next* 100.
-    *   Repeat until Steam says "No more".
-3.  **Rate Limits**: If we ask too fast, Steam blocks us. The code handles this by waiting (sleeping) automatically.
+```bash
+steam-review-exporter
+```
 
-Happy Coding! 🚀
+Scriptable mode:
+
+```bash
+steam-review-exporter --app-id 588650 --language english --filter recent --min-len 100 --output-dir exports
+```

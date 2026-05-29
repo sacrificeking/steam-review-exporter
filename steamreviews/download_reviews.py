@@ -12,6 +12,7 @@ import copy
 import datetime
 import json
 import logging
+import os
 import pathlib
 import time
 from http import HTTPStatus
@@ -22,6 +23,8 @@ import requests
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+
+DATA_DIR_ENV_VAR = "STEAM_REVIEWS_DATA_DIR"
 
 
 def parse_app_id(app_id: Union[str, int]) -> Optional[int]:
@@ -109,16 +112,29 @@ def get_default_request_parameters(chosen_request_params: Optional[Dict] = None)
     return default_request_parameters
 
 
-def get_data_path() -> str:
+def get_data_path(data_dir: Optional[Union[str, Path]] = None) -> str:
     """Returns the path to the 'data/' directory where reviews are cached locally."""
-    data_path = "data/"
-    pathlib.Path(data_path).mkdir(parents=True, exist_ok=True)
-    return data_path
+    if data_dir is None:
+        data_dir = os.environ.get(DATA_DIR_ENV_VAR, "data")
+
+    data_path = Path(data_dir)
+    data_path.mkdir(parents=True, exist_ok=True)
+    return str(data_path)
 
 
 def get_steam_api_url() -> str:
     """Returns the URL of the Steam Reviews API."""
     return "https://store.steampowered.com/appreviews/"
+
+
+def get_steam_api_headers() -> Dict[str, str]:
+    """Returns headers sent to the Steam Reviews API."""
+    return {"User-Agent": "steam-review-exporter/1.0"}
+
+
+def get_steam_api_request_timeout() -> Tuple[int, int]:
+    """Returns connect and read timeouts for Steam API requests."""
+    return (5, 30)
 
 
 def get_steam_api_rate_limits() -> Dict[str, int]:
@@ -130,9 +146,20 @@ def get_steam_api_rate_limits() -> Dict[str, int]:
     }
 
 
-def get_output_filename(app_id: int) -> str:
+def get_retry_status_codes() -> Set[int]:
+    """Returns HTTP status codes that are likely to succeed after a short retry."""
+    return {
+        HTTPStatus.TOO_MANY_REQUESTS,
+        HTTPStatus.INTERNAL_SERVER_ERROR,
+        HTTPStatus.BAD_GATEWAY,
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        HTTPStatus.GATEWAY_TIMEOUT,
+    }
+
+
+def get_output_filename(app_id: int, data_dir: Optional[Union[str, Path]] = None) -> str:
     """Returns the JSON filename for a specific AppID."""
-    return get_data_path() + "review_" + str(app_id) + ".json"
+    return str(Path(get_data_path(data_dir)) / f"review_{app_id}.json")
 
 
 def get_dummy_query_summary() -> Dict[str, int]:
@@ -142,12 +169,21 @@ def get_dummy_query_summary() -> Dict[str, int]:
     return query_summary
 
 
-def load_review_dict(app_id: int) -> Dict[str, Any]:
+def get_empty_review_dict() -> Dict[str, Any]:
+    """Returns the default local review cache structure."""
+    return {
+        "reviews": {},
+        "query_summary": get_dummy_query_summary(),
+        "cursors": {},
+    }
+
+
+def load_review_dict(app_id: int, data_dir: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
     """
     Loads existing reviews for an AppID from the local JSON cache.
     Returns an empty structure if no file exists.
     """
-    review_data_filename = get_output_filename(app_id)
+    review_data_filename = get_output_filename(app_id, data_dir)
 
     try:
         with Path(review_data_filename).open(encoding="utf8") as in_json_file:
@@ -157,12 +193,20 @@ def load_review_dict(app_id: int) -> Dict[str, Any]:
         if "cursors" not in review_dict:
             review_dict["cursors"] = {}
     except FileNotFoundError:
-        review_dict = {}
-        review_dict["reviews"] = {}
-        review_dict["query_summary"] = get_dummy_query_summary()
-        review_dict["cursors"] = {}
+        review_dict = get_empty_review_dict()
+    except json.JSONDecodeError as error:
+        logger.error(f"Could not parse cached review file '{review_data_filename}': {error}")
+        review_dict = get_empty_review_dict()
 
     return cast(Dict[str, Any], review_dict)
+
+
+def write_review_dict(app_id: int, review_dict: Dict[str, Any], data_dir: Optional[Union[str, Path]] = None) -> None:
+    """Writes cached review data atomically."""
+    output_path = Path(get_output_filename(app_id, data_dir))
+    temp_path = output_path.with_name(output_path.name + ".tmp")
+    temp_path.write_text(json.dumps(review_dict) + "\n", encoding="utf8")
+    temp_path.replace(output_path)
 
 
 def get_request(app_id: int, chosen_request_params: Optional[Dict] = None) -> Dict[str, str]:
@@ -231,12 +275,25 @@ def download_reviews_for_app_id_with_offset(
     req_data = get_request(app_id, chosen_request_params)
     req_data["cursor"] = str(cursor)
 
-    resp_data = requests.get(get_steam_api_url() + req_data["appids"], params=req_data)
-    status_code = resp_data.status_code
-    query_count += 1
+    request_url = get_steam_api_url() + req_data["appids"]
+    retry_status_codes = get_retry_status_codes()
 
-    # Handle 502 Bad Gateway (Servers overloaded)
-    while (status_code == HTTPStatus.BAD_GATEWAY) and (query_count < rate_limits["max_num_queries"]):
+    try:
+        resp_data = requests.get(
+            request_url,
+            params=req_data,
+            headers=get_steam_api_headers(),
+            timeout=get_steam_api_request_timeout(),
+        )
+        status_code = resp_data.status_code
+        query_count += 1
+    except requests.exceptions.RequestException as error:
+        query_count += 1
+        logger.error(f"Steam API request failed for appID = {app_id} and cursor = {cursor}: {error}")
+        return False, [], get_dummy_query_summary(), query_count, cursor
+
+    # Handle temporary Steam API failures.
+    while (status_code in retry_status_codes) and (query_count < rate_limits["max_num_queries"]):
         cooldown_duration_for_bad_gateway = rate_limits["cooldown_bad_gateway"]
         logger.warning(
             f"Unexpected status code {resp_data.status_code}. "
@@ -245,15 +302,26 @@ def download_reviews_for_app_id_with_offset(
         for _ in tqdm(range(cooldown_duration_for_bad_gateway), desc="Bad Gateway Cooldown"):
             time.sleep(1)
 
-        resp_data = requests.get(
-            get_steam_api_url() + req_data["appids"],
-            params=req_data,
-        )
-        status_code = resp_data.status_code
-        query_count += 1
+        try:
+            resp_data = requests.get(
+                request_url,
+                params=req_data,
+                headers=get_steam_api_headers(),
+                timeout=get_steam_api_request_timeout(),
+            )
+            status_code = resp_data.status_code
+            query_count += 1
+        except requests.exceptions.RequestException as error:
+            query_count += 1
+            logger.error(f"Steam API retry failed for appID = {app_id} and cursor = {cursor}: {error}")
+            return False, [], get_dummy_query_summary(), query_count, cursor
 
     if status_code == HTTPStatus.OK:
-        result = resp_data.json()
+        try:
+            result = resp_data.json()
+        except ValueError as error:
+            result = {"success": 0}
+            logger.error(f"Invalid JSON response for appID = {app_id} and cursor = {cursor}: {error}")
     else:
         result = {"success": 0}
         logger.error(
@@ -281,6 +349,7 @@ def download_reviews_for_app_id(
     chosen_request_params: Optional[Dict] = None,
     start_cursor: str = "*",
     verbose: bool = False,
+    data_dir: Optional[Union[str, Path]] = None,
 ) -> Tuple[Dict, int]:
     """
     Main loop to download ALL reviews for a given AppID.
@@ -312,7 +381,7 @@ def download_reviews_for_app_id(
                 f"Collecting reviews {collection_keyword} after {date_threshold}",
             )
 
-    review_dict = load_review_dict(app_id)
+    review_dict = load_review_dict(app_id, data_dir)
 
     previous_review_ids = set(review_dict["reviews"])
 
@@ -453,8 +522,7 @@ def download_reviews_for_app_id(
         if review_id not in previous_review_ids:
             review_dict["reviews"][review_id] = review
 
-    with Path(get_output_filename(app_id)).open("w") as f:
-        f.write(json.dumps(review_dict) + "\n")
+    write_review_dict(app_id, review_dict, data_dir)
 
     if pbar:
         pbar.close()
@@ -467,6 +535,7 @@ def download_reviews_for_app_id_batch(
     previously_processed_app_ids: Optional[Set[int]] = None,
     chosen_request_params: Optional[Dict] = None,
     verbose: bool = False,
+    data_dir: Optional[Union[str, Path]] = None,
 ) -> bool:
     """
     Downloads reviews for a list of AppIDs.
@@ -500,6 +569,7 @@ def download_reviews_for_app_id_batch(
             app_id,
             query_count,
             chosen_request_params,
+            data_dir=data_dir,
             verbose=verbose,
         )
 
