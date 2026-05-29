@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "steam-review-exporter"
+version = "1.0.0"
+description = "Command-line tool to download Steam reviews and export them to Excel."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  {name = "sacrificeking"},
+]
+keywords = ["steam", "review", "reviews", "download", "api", "excel"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Topic :: Games/Entertainment",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "requests>=2.32.4",
+    "pandas",
+    "openpyxl",
+    "tqdm",
+    "langdetect",
+    "rich",
+    "pydantic",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "types-requests",
+]
+
+[project.urls]
+Homepage = "https://github.com/sacrificeking/steam-review-exporter"
+
+[project.scripts]
+steam-review-exporter = "export_reviews:main"
+
+[tool.setuptools]
+py-modules = ["export_reviews"]
+packages = ["steamreviews"]
+
+[tool.pytest.ini_options]
+testpaths = ["steamreviews/tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "B"]  # Pyflakes, pycodestyle, bugbear
+ignore = []
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = [
+    "^build/",
+    "^\\.venv/",
+]

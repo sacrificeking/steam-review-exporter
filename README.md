@@ -1,36 +1,88 @@
-# Download Steam Reviews
+# Steam Review Exporter
 
-[![PyPI status][pypi-image]][pypi]
-[![Build status][build-image]][build]
-[![Code coverage][codecov-image]][codecov]
-[![Code Quality][codacy-image]][codacy]
+A command-line tool to download Steam reviews for any game and export them directly to Excel.
 
-This repository contains Python code to download every Steam review for the games of your choice.
+This project helps you to download Steam reviews for any game and export them directly to Excel.
 
-## Requirements
+## Features
 
--   Install the latest version of [Python 3.X](https://www.python.org/downloads/) (at least version 3.11).
+-   **Download Reviews**: Fetch reviews for any Steam AppID.
+-   **Excel Export**: Automatically saves reviews to a structured `.xlsx` file.
+-   **Smart Language Filtering**: Uses metadata and content analysis to ensure accurate language results (fixes common Steam API issues).
+-   **Filtering**: Sort by "Helpful", "Funny", "Recent", or "Updated".
+-   **Interactive Mode**: Simple step-by-step prompts to guide you through the process.
+-   **Robust Validation**: Checks inputs automatically to prevent errors (powered by Pydantic).
+-   **Beautiful Output**: Colored logging and progress bars (powered by Rich).
+-   **Library Access**: Full access to the underlying `steamreviews` library for developers.
 
 ## Installation
 
-The code is packaged for [PyPI](https://pypi.org/project/steamreviews/), so that the installation consists in running:
+### 1. Prerequisites
+-   **Install Python**: Download and install [Python 3.11 or newer](https://www.python.org/downloads/).
+    -   **Important**: During installation, check the box that says **"Add Python to PATH"**.
 
-```bash
-pip install steamreviews
-```
+### 2. Download and Install
+1.  **Download the Code**:
+    Download this project (click "Code" > "Download ZIP") and extract it to a folder on your computer.
+
+2.  **Open a Terminal**:
+    -   Go to the folder where you extracted the files.
+    -   Right-click in the empty space of the folder window and select "Open Terminal here" or "Open PowerShell window here".
+
+3.  **Install Dependencies**:
+    Run this command to install the necessary libraries:
+    ```bash
+    python -m pip install .
+    ```
+    *(For Developers: See the [Developer Guide](DEVELOPER_GUIDE.md) for setup and testing instructions)*
 
 ## Usage
 
-The Steam API is rate-limited so you should be able to download about 10 reviews per second.
+### Option 1: Run via Command (Recommended)
+After installation, you can run the tool from anywhere in your terminal:
 
-NB: If you do not know the appID of a game, look for it on the Steam store. The appID is a unique number in the URL.
+```bash
+steam-review-exporter
+```
 
-For instance, for [SpyParty](https://store.steampowered.com/app/329070/SpyParty/), the appID is 329070.
+### Option 2: Run directly (If "command not found")
+If the command above doesn't work, you can always run the script directly from the project folder:
 
-![appID for SpyParty](https://i.imgur.com/LNlyUFW.png)
+```bash
+python export_reviews.py
+```
 
-### Process a batch of appIDs
+Follow the on-screen prompts to:
+1.  Enter the Steam App-ID (e.g., `588650` for Dead Cells).
+    -   *Tip: You can find the AppID in the store URL: `store.steampowered.com/app/<AppID>/`*
+2.  Choose a language (e.g., `english`, `german`, or `all`).
+3.  Select a filter:
+    -   **All**: Default, sorted by helpfulness.
+    -   **Funny**: Sorted by "funny" votes.
+    -   **Recent**: Sorted by creation date.
+    -   **Updated**: Sorted by update date.
+4.  **Optional**: Filter by review length.
+    -   Enter a minimum character count (e.g., `100`).
+    -   Enter a maximum character count (e.g., `500`) or press Enter for no limit.
 
+The tool will download the reviews and save an Excel file...
+
+---
+
+### 2. Python Library (Advanced)
+You can use the underlying `steamreviews` package in your own Python scripts, just like in the original project.
+
+> **Note**: The Steam API is rate-limited. You should be able to download about 10 reviews per second.
+
+#### Download reviews for one AppID
+```python
+import steamreviews
+
+app_id = 588650 # Dead Cells
+review_dict, query_count = steamreviews.download_reviews_for_app_id(app_id)
+```
+
+#### Process a batch of AppIDs
 ```python
 import steamreviews
 
@@ -38,126 +90,48 @@ app_ids = [329070, 573170]
 steamreviews.download_reviews_for_app_id_batch(app_ids)
 ```
 
-### Process a batch of appIDs, written down in a text file
+#### Advanced Filtering
+You can pass specific request parameters to filter reviews by language, sentiment, or time range.
 
--   For every game of interest, write down its appID in a text file named `idlist.txt`. There should be an appID per line.
--   Then proceed as follows: 
-
-```python
-import steamreviews
-
-steamreviews.download_reviews_for_app_id_batch()
-```
-
-### Load reviews for one appID
-
-```python
-import steamreviews
-
-app_id = 329070
-review_dict = steamreviews.load_review_dict(app_id)
-```
-
-### Download reviews for one appID
-
-```python
-import steamreviews
-
-app_id = 573170
-review_dict, query_count = steamreviews.download_reviews_for_app_id(app_id)
-```
-
-### Download reviews for one appID, with specific request parameters (language, sentiment, store)
-
-**Caveat**: the following parameters do not appear in the output filename,
-so make sure that you start the download from scratch (instead of updating existing JSON review data)
-if you ever decide to **change** them, e.g the value of the `review_type` (set to `all`, `positive` or `negative`).
-
-**Caveat²**: if `review_type` is set to `positive` (or `negative`), then the value of `total_reviews` can be misleading.
-It is indeed arbitrarily set to `total_positive` (respectively `total_negative`).
-In this case, if you need the total number of reviews, compute it as the sum of `total_positive` and `total_negative`.
-
+**Example: Download recent positive reviews**
 ```python
 import steamreviews
 
 request_params = dict()
 # Reference: https://partner.steamgames.com/doc/store/localization#supported_languages
 request_params['language'] = 'english'
-# Reference: https://partner.steamgames.com/doc/store/getreviews
-request_params['review_type'] = 'positive'
-request_params['purchase_type'] = 'steam'
+request_params['review_type'] = 'positive' # or 'negative', 'all'
+request_params['purchase_type'] = 'steam' # or 'non_steam_purchase'
 
-app_id = 573170
-review_dict, query_count = steamreviews.download_reviews_for_app_id(app_id,
-                                                                    chosen_request_params=request_params)
+app_id = 588650
+review_dict, query_count = steamreviews.download_reviews_for_app_id(
+    app_id,
+    chosen_request_params=request_params
+)
 ```
 
-### Download a few of the most helpful reviews for one appID, which were created in a time-window
-
-**Caveat**: with `filter` set to `all`, you will only be able to download **a few** reviews within the specified time-window.
-
+**Example: Download reviews from the last 28 days**
 ```python
 import steamreviews
 
 request_params = dict()
-# Reference: https://partner.steamgames.com/doc/store/getreviews
-request_params['filter'] = 'all'  # reviews are sorted by helpfulness instead of chronology
-request_params['day_range'] = '28'  # focus on reviews which were published during the past four weeks
-
-app_id = 573170
-review_dict, query_count = steamreviews.download_reviews_for_app_id(app_id,
-                                                                    chosen_request_params=request_params)
-```
-
-### Download reviews for one appID, which were created within a specific time-window
-
-```python
-import steamreviews
-
-request_params = dict()
-request_params['filter'] = 'recent'
+request_params['filter'] = 'recent' # or 'updated', 'all' (helpful)
 request_params['day_range'] = '28'
 
-app_id = 573170
-review_dict, query_count = steamreviews.download_reviews_for_app_id(app_id,
-                                                                    chosen_request_params=request_params)
+app_id = 588650
+review_dict, query_count = steamreviews.download_reviews_for_app_id(
+    app_id,
+    chosen_request_params=request_params
+)
 ```
 
-### Download reviews for one appID, which were updated within a specific time-window
+## Troubleshooting
 
-```python
-import steamreviews
+### "pip" is not recognized...
+If you see an error saying `pip` or `python` is not recognized:
+1.  Reinstall Python.
+2.  Make sure to check the box **"Add Python to environment variables"** (or "PATH") at the start of the installation.
+3.  Restart your computer.
 
-request_params = dict()
-request_params['filter'] = 'updated'
-request_params['day_range'] = '28'
-
-app_id = 573170
-review_dict, query_count = steamreviews.download_reviews_for_app_id(app_id,
-                                                                    chosen_request_params=request_params)
-```
-
-## References
-
-- [my original Steam-Reviews repository](https://github.com/woctezuma/steam-reviews)
-
-- [a snapshot of Steam-Reviews data for hidden gems](https://github.com/woctezuma/steam-reviews-data)
-
-<!-- Definitions for badges -->
-
-[pypi]: <https://pypi.python.org/pypi/steamreviews>
-[pypi-image]: <https://badge.fury.io/py/steamreviews.svg>
-
-[build]: <https://github.com/woctezuma/download-steam-reviews/actions>
-[build-image]: <https://github.com/woctezuma/download-steam-reviews/workflows/Python package/badge.svg?branch=master>
-[publish-image]: <https://github.com/woctezuma/download-steam-reviews/workflows/Upload Python Package/badge.svg?branch=master>
-
-[pyup]: <https://pyup.io/repos/github/woctezuma/download-steam-reviews/>
-[dependency-image]: <https://pyup.io/repos/github/woctezuma/download-steam-reviews/shield.svg>
-[python3-image]: <https://pyup.io/repos/github/woctezuma/download-steam-reviews/python-3-shield.svg>
-
-[codecov]: <https://codecov.io/gh/woctezuma/download-steam-reviews>
-[codecov-image]: <https://codecov.io/gh/woctezuma/download-steam-reviews/branch/master/graph/badge.svg>
-
-[codacy]: <https://www.codacy.com/app/woctezuma/gamedatacrunch>
-[codacy-image]: <https://api.codacy.com/project/badge/Grade/253164b80b704f00a1fd2b083f1348bb>
+### Permission Errors
+If you get an error when saving the Excel file, make sure the file isn't currently open in Excel. Close it and try again.

@@ -1,0 +1,27 @@
+# Bytes
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# User Data
+*.xlsx
+idlist.txt
+idprocessed.txt
+idprocessed*.txt
+data/
+
+# Environments
+.venv/
+env/
+venv/
+
+# IDEs
+.vscode/
+.idea/

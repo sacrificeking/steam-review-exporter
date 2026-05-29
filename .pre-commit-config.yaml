@@ -3,7 +3,7 @@ default_stages: [pre-commit, manual]
 repos:
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.7
+    rev: v0.14.14
     hooks:
     - id: ruff
       args: [
@@ -23,9 +23,8 @@ repos:
       stages: [manual]
 
 -   repo: https://github.com/dosisod/refurb
-    rev: v2.1.0
+    rev: v2.2.0
     hooks:
     - id: refurb
       args: [--python-version, "3.12"]
       stages: [manual]
-
