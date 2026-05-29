@@ -6,7 +6,8 @@ Persistent task board for agent-assisted development.
 
 - Repository baseline: `v1.0.0` released.
 - Post-1.0 hardening commit pushed: request timeouts, test separation, CLI args, cache safety, export tests, and 60% coverage gate.
-- Current objective: establish best-practice agent memory and skill setup.
+- Agent memory setup is in place.
+- Current objective: finalize local release governance rules.
 
 ## Active Task: Agent Memory Setup
 
@@ -19,6 +20,19 @@ Steps:
 3. Create atomic skill manuals in `skills/`.
 4. Verify repository checks still pass.
 5. Review diff and commit/push when complete.
+
+## Active Task: Release Governance Rules
+
+Status: completed
+
+Steps:
+
+1. Encode SemVer release policy in `INSTRUCTIONS.md`.
+2. Encode no-push-without-approval boundary in `CODEX.md`.
+3. Update `skills/release/SKILL.md` with versioning and publishing gates.
+4. Capture the user correction in `tasks/lessons.md`.
+5. Verify checks locally.
+6. Commit locally only; do not push without explicit approval.
 
 Verification gates:
 

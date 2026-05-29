@@ -78,12 +78,20 @@ After any user correction, failed assumption, repeated test failure, or missed r
 Before release work:
 
 1. Ensure `master` is clean or understand all pending changes.
-2. Run fast checks.
-3. Update release notes.
-4. Commit intentionally.
-5. Tag intentionally.
-6. Push branch and tag.
-7. Verify GitHub release or CI status.
+2. Choose the next version with Semantic Versioning:
+   - Patch: backward-compatible bug fixes and small internal hardening.
+   - Minor: backward-compatible user-facing features.
+   - Major: breaking behavior or public API changes.
+3. Create release notes for exactly that version before publishing.
+4. Run fast checks.
+5. Commit intentionally.
+6. Tag intentionally with `vMAJOR.MINOR.PATCH`.
+7. Stop and ask the user for explicit approval before any remote publishing.
+8. Only after approval, push branch and tag.
+9. Only after approval, create or update the GitHub release.
+10. Verify GitHub release and CI status after publishing.
+
+Publishing includes `git push`, creating/updating GitHub releases, deleting remote tags, changing remote repository settings, or any other action that modifies GitHub state.
 
 ## 8. Final Response Rule
 
