@@ -1,11 +1,13 @@
 import argparse
-import requests
 import logging
 from typing import Tuple, Optional, Literal, Sequence
+
+import pydantic
+import requests
+
 from steamreviews.utils import setup_logging
 from steamreviews.export import fetch_reviews, process_reviews, save_to_excel
 from steamreviews.models import ReviewExportConfig
-import pydantic
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", help="Directory where the Excel file should be written.")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose debug logging.")
     args = parser.parse_args(argv)
-    has_cli_config = any(
+    has_cli_config = is_non_interactive_config(args)
+    if has_cli_config and (args.app_id is None or args.language is None):
+        parser.error("--app-id and --language are required when using command-line options.")
+    return args
+
+
+def is_non_interactive_config(args: argparse.Namespace) -> bool:
+    """Return True when command-line options provide an export configuration."""
+    return any(
         [
             args.app_id is not None,
             args.language is not None,
@@ -39,9 +49,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             args.output_dir is not None,
         ]
     )
-    if has_cli_config and (args.app_id is None or args.language is None):
-        parser.error("--app-id and --language are required when using command-line options.")
-    return args
 
 
 def get_app_id() -> int:
@@ -85,13 +92,14 @@ def get_game_name(app_id: int) -> str:
     try:
         url = f"https://store.steampowered.com/api/appdetails?appids={app_id}"
         response = requests.get(url, timeout=10)
+        response.raise_for_status()
         data = response.json()
 
         if data and str(app_id) in data:
             success = data[str(app_id)].get("success", False)
             if success:
                 return str(data[str(app_id)]["data"]["name"])
-    except Exception as e:
+    except (KeyError, TypeError, ValueError, requests.exceptions.RequestException) as e:
         logger.warning(f"Warning: Could not fetch game name: {e}")
 
     return str(app_id)
@@ -139,6 +147,7 @@ def get_validated_config(args: Optional[argparse.Namespace] = None) -> ReviewExp
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
     args = parse_args(argv)
+    non_interactive = is_non_interactive_config(args)
     setup_logging(verbose=args.verbose)
     try:
         # Initial parameters
@@ -167,6 +176,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 logger.warning(f"No reviews found for '{game_name}' (AppID {config.app_id}).")
                 logger.info("Check if the AppID is correct.")
                 logger.info("Check if the game has reviews in the selected language.")
+
+            if non_interactive:
+                break
 
             # Loop check
             again = input("\nDo you want to download another game with the same parameters? (y/n): ").strip().lower()

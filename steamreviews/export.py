@@ -82,7 +82,7 @@ def fetch_reviews(
     if language and language != "all":
         request_params["language"] = language
 
-    if filter_type and filter_type != "all":
+    if filter_type:
         request_params["filter"] = filter_type
 
     try:
@@ -99,6 +99,9 @@ def fetch_reviews(
     reviews = review_data.get("reviews", [])
     if isinstance(reviews, dict):
         reviews = list(reviews.values())
+    elif not isinstance(reviews, list):
+        logger.error("Downloaded review payload did not contain a valid reviews list.")
+        return []
 
     if language and language != "all":
         # API language codes are lowercase (e.g. 'english', 'schinese')
@@ -117,6 +120,8 @@ def fetch_reviews(
 
             for r in reviews:
                 text = r.get("review", "")
+                if not isinstance(text, str):
+                    text = ""
                 # Skip detection for very short texts (unreliable)
                 if len(text) < 10:
                     filtered_reviews.append(r)
@@ -147,7 +152,8 @@ def fetch_reviews(
         initial_count = len(reviews)
         filtered_reviews = []
         for r in reviews:
-            text_len = len(r.get("review", ""))
+            review_text = r.get("review", "")
+            text_len = len(review_text) if isinstance(review_text, str) else 0
 
             # Check minimum length
             if text_len < min_len:
@@ -180,7 +186,9 @@ def process_reviews(reviews: List[Dict], app_id: int) -> pd.DataFrame:
         review = dict(raw_review)
 
         # 1. URL Generation
-        author = review.get("author", {})
+        author = review.get("author") or {}
+        if not isinstance(author, dict):
+            author = {}
         steam_id = author.get("steamid")
         review_url = f"https://steamcommunity.com/profiles/{steam_id}/recommended/{app_id}/" if steam_id else ""
 

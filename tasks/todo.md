@@ -7,7 +7,7 @@ Persistent task board for agent-assisted development.
 - Repository baseline: `v1.0.0` released.
 - Post-1.0 hardening commit pushed: request timeouts, test separation, CLI args, cache safety, export tests, and 60% coverage gate.
 - Agent memory setup is in place.
-- Current objective: finalize local release governance rules.
+- Current objective: detailed dead-end and code-error review with fixes.
 
 ## Active Task: Agent Memory Setup
 
@@ -33,6 +33,19 @@ Steps:
 4. Capture the user correction in `tasks/lessons.md`.
 5. Verify checks locally.
 6. Commit locally only; do not push without explicit approval.
+
+## Active Task: Dead-End And Code Error Review
+
+Status: completed
+
+Steps:
+
+1. Run baseline verification and stricter static checks.
+2. Inspect all Python source, tests, packaging, and workflows for dead ends and likely bugs.
+3. Fix confirmed issues with minimal scoped changes.
+4. Add or adjust tests for every behavior fix.
+5. Re-run fast verification and review final diff.
+6. Do not push without explicit approval.
 
 Verification gates:
 

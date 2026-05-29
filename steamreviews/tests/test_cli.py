@@ -1,6 +1,6 @@
 import pytest
 
-from export_reviews import get_validated_config, parse_args
+from export_reviews import get_validated_config, main, parse_args
 
 
 def test_parse_args_accepts_non_interactive_config():
@@ -43,3 +43,16 @@ def test_get_validated_config_from_args():
     assert config.language == "german"
     assert config.filter_type == "all"
     assert config.output_dir == "exports"
+
+
+def test_main_does_not_prompt_again_in_non_interactive_mode(monkeypatch):
+    monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
+    monkeypatch.setattr(
+        "export_reviews.fetch_reviews",
+        lambda app_id, language, filter_type, min_len, max_len: [{"review": "Nice", "author": {}}],
+    )
+    monkeypatch.setattr("export_reviews.process_reviews", lambda reviews, app_id: object())
+    monkeypatch.setattr("export_reviews.save_to_excel", lambda *args, **kwargs: None)
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail(f"Unexpected prompt: {prompt}"))
+
+    main(["--app-id", "588650", "--language", "english"])

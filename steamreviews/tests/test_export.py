@@ -34,7 +34,7 @@ def test_process_reviews_adds_url_and_sanitizes_review_text():
         {
             "recommendationid": "2",
             "review": "Plain text",
-            "author": {},
+            "author": None,
         },
     ]
 
@@ -66,6 +66,26 @@ def test_fetch_reviews_filters_by_metadata_content_and_length(mock_download, moc
     reviews = fetch_reviews(588650, "english", min_len=10)
 
     assert [review["recommendationid"] for review in reviews] == ["1"]
+    mock_download.assert_called_once_with(
+        588650,
+        chosen_request_params={"language": "english", "filter": "all"},
+    )
+
+
+@patch("steamreviews.export.steamreviews.download_reviews_for_app_id")
+def test_fetch_reviews_passes_all_filter_to_steam(mock_download):
+    mock_download.return_value = ({"reviews": []}, 1)
+
+    fetch_reviews(588650, "all", filter_type="all")
+
+    mock_download.assert_called_once_with(588650, chosen_request_params={"filter": "all"})
+
+
+@patch("steamreviews.export.steamreviews.download_reviews_for_app_id")
+def test_fetch_reviews_rejects_invalid_reviews_payload(mock_download):
+    mock_download.return_value = ({"reviews": None}, 1)
+
+    assert fetch_reviews(588650, "all") == []
 
 
 def test_build_output_filename_includes_filter_and_length_details():

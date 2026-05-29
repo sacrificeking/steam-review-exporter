@@ -59,7 +59,7 @@ def app_id_reader(filename: Optional[str] = None) -> Generator[Optional[int], No
     if filename is None:
         filename = get_input_app_ids_filename()
 
-    with Path(filename).open() as f:
+    with Path(filename).open(encoding="utf8") as f:
         for row in f:
             yield parse_app_id(row)
 
@@ -256,7 +256,10 @@ def download_the_full_query_summary(
     ):
         # Override the total number of reviews with the total number of reviews of the chosen type:
         total_str = "total_" + original_review_type
-        query_summary["total_reviews"] = query_summary[total_str]
+        if total_str in query_summary:
+            query_summary["total_reviews"] = query_summary[total_str]
+        else:
+            logger.warning(f"Steam API query summary did not include '{total_str}' for appID = {app_id}")
 
     return success_flag, query_summary, query_count
 
@@ -328,7 +331,7 @@ def download_reviews_for_app_id_with_offset(
             f"Faulty response status code = {status_code} for appID = {app_id} and cursor = {cursor}",
         )
 
-    success_flag = bool(result["success"] == 1)
+    success_flag = bool(result.get("success") == 1)
 
     try:
         downloaded_reviews = result["reviews"]
@@ -416,8 +419,10 @@ def download_reviews_for_app_id(
             delta_reviews = len(downloaded_reviews)
 
             # Initialize progress bar once we know the total reviews
-            if num_reviews is None and "total_reviews" in query_summary:
-                num_reviews = query_summary["total_reviews"]
+            total_reviews = query_summary.get("total_reviews")
+            if success_flag and num_reviews is None and total_reviews is not None and total_reviews >= 0:
+                review_dict["query_summary"] = query_summary
+                num_reviews = total_reviews
                 logger.info(f"[appID = {app_id}] expected #reviews = {num_reviews}")
                 pbar = tqdm(total=num_reviews, desc=f"Downloading reviews for AppID {app_id}", unit="reviews")
 
@@ -557,6 +562,7 @@ def download_reviews_for_app_id_batch(
 
     query_count = 0
     game_count = 0
+    all_downloads_succeeded = True
 
     for app_id in input_app_ids:
         if app_id in previously_processed_app_ids:
@@ -573,13 +579,18 @@ def download_reviews_for_app_id_batch(
             verbose=verbose,
         )
 
+        num_expected_reviews = review_dict["query_summary"]["total_reviews"]
+        if num_expected_reviews < 0:
+            all_downloads_succeeded = False
+            logger.error(f"Skipping processed marker for appID = {app_id}, because the download did not succeed.")
+            continue
+
         game_count += 1
 
-        with Path(get_processed_app_ids_filename()).open("a") as f:
+        with Path(get_processed_app_ids_filename()).open("a", encoding="utf8") as f:
             f.write(str(app_id) + "\n")
 
         num_downloaded_reviews = len(review_dict["reviews"])
-        num_expected_reviews = review_dict["query_summary"]["total_reviews"]
 
         logger.info(
             f"[appID = {app_id}] num_reviews = {num_downloaded_reviews} (expected: {num_expected_reviews})",
@@ -587,7 +598,7 @@ def download_reviews_for_app_id_batch(
 
     logger.info(f"Game records written: {game_count}")
 
-    return True
+    return all_downloads_succeeded
 
 
 if __name__ == "__main__":

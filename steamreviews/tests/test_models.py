@@ -24,6 +24,24 @@ def test_language_normalization():
     assert config.language == "german"
 
 
+def test_blank_language_after_strip_is_invalid():
+    with pytest.raises(ValueError):
+        ReviewExportConfig(
+            app_id=1,
+            language="  ",
+        )
+
+
+def test_invalid_length_range():
+    with pytest.raises(ValueError):
+        ReviewExportConfig(
+            app_id=1,
+            language="english",
+            min_len=500,
+            max_len=100,
+        )
+
+
 if __name__ == "__main__":
     # fast manual check
     test_valid_config()
