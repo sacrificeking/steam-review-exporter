@@ -4,19 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "steam-review-exporter"
-version = "1.0.0"
+version = "1.0.1"
 description = "Command-line tool to download Steam reviews and export them to Excel."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
   {name = "sacrificeking"},
 ]
+license = "MIT"
 keywords = ["steam", "review", "reviews", "download", "api", "excel"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Topic :: Games/Entertainment",
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 dependencies = [

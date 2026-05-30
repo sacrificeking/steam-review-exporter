@@ -53,7 +53,7 @@ Run these before committing:
 python -m ruff check .
 python -m ruff format --check .
 python -m mypy .
-python -m pytest -m "not integration" --cov=steamreviews --cov-fail-under=60
+python -m pytest -m "not integration" --cov=steamreviews --cov-fail-under=75
 ```
 
 The fast test suite does not call the live Steam API.

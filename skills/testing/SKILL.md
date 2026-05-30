@@ -14,7 +14,7 @@ Run:
 python -m ruff check .
 python -m ruff format --check .
 python -m mypy .
-python -m pytest -m "not integration" --cov=steamreviews --cov-fail-under=60
+python -m pytest -m "not integration" --cov=steamreviews --cov-fail-under=75
 ```
 
 In this Windows workspace, use the virtualenv path when needed:

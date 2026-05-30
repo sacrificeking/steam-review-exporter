@@ -4,12 +4,14 @@ import requests
 import re
 import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Union
 from langdetect import detect, LangDetectException
 
 logger = logging.getLogger(__name__)
 
 EXCEL_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+Review = Dict[str, Any]
+LanguageDetector = Callable[[str], str]
 
 # Minimal mapping of Steam language names to ISO 639-1 codes
 STEAM_LANG_TO_ISO = {
@@ -67,9 +69,114 @@ def build_output_filename(
     return f"{safe_game_name} {lang_iso} - Reviews {' '.join(details)}.xlsx"
 
 
+def build_review_request_params(language: str, filter_type: str = "all") -> Dict[str, str]:
+    """Builds request parameters for the Steam reviews downloader."""
+    request_params = {}
+    if language and language != "all":
+        request_params["language"] = language
+
+    if filter_type:
+        request_params["filter"] = filter_type
+
+    return request_params
+
+
+def download_review_payload(app_id: int, request_params: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    """Downloads raw review payload data from the steamreviews library."""
+    try:
+        return steamreviews.download_reviews_for_app_id(app_id, chosen_request_params=request_params)[0]
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Network Error: Could not connect to Steam. Details: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error downloading reviews: {e}")
+        return None
+
+
+def normalize_reviews_payload(review_data: Dict[str, Any]) -> List[Review]:
+    """Normalizes Steam review payloads into a list of review dictionaries."""
+    reviews = review_data.get("reviews", [])
+    if isinstance(reviews, dict):
+        return list(reviews.values())
+
+    if isinstance(reviews, list):
+        return reviews
+
+    logger.error("Downloaded review payload did not contain a valid reviews list.")
+    return []
+
+
+def filter_reviews_by_language(
+    reviews: List[Review],
+    language: str,
+    detector: Optional[LanguageDetector] = None,
+) -> List[Review]:
+    """Filters reviews by Steam metadata and optional content language detection."""
+    if not language or language == "all":
+        return reviews
+
+    target_lang = language.lower()
+    filtered_reviews = [review for review in reviews if review.get("language") == target_lang]
+
+    target_iso = STEAM_LANG_TO_ISO.get(target_lang)
+    if target_iso is None:
+        return filtered_reviews
+
+    detector = detector or detect
+    logger.info(f"Applying content analysis for language '{target_lang}' (ISO: {target_iso})...")
+    content_filtered_reviews = []
+    removed_count = 0
+
+    for review in filtered_reviews:
+        text = review.get("review", "")
+        if not isinstance(text, str):
+            text = ""
+
+        if len(text) < 10:
+            content_filtered_reviews.append(review)
+            continue
+
+        try:
+            if detector(text) == target_iso:
+                content_filtered_reviews.append(review)
+            else:
+                removed_count += 1
+        except LangDetectException:
+            content_filtered_reviews.append(review)
+
+    logger.info(f"Content Filter: Removed {removed_count} reviews that did not match '{target_iso}'.")
+    return content_filtered_reviews
+
+
+def filter_reviews_by_length(reviews: List[Review], min_len: int = 0, max_len: Optional[int] = None) -> List[Review]:
+    """Filters reviews by review text length."""
+    if min_len <= 0 and max_len is None:
+        return reviews
+
+    filtered_reviews = []
+    for review in reviews:
+        review_text = review.get("review", "")
+        text_len = len(review_text) if isinstance(review_text, str) else 0
+
+        if text_len < min_len:
+            continue
+
+        if max_len is not None and text_len > max_len:
+            continue
+
+        filtered_reviews.append(review)
+
+    removed_len = len(reviews) - len(filtered_reviews)
+    logger.info(
+        f"Length Filter: Removed {removed_len} reviews outside length range "
+        f"[{min_len}, {max_len if max_len is not None else 'Inf'}]."
+    )
+    return filtered_reviews
+
+
 def fetch_reviews(
     app_id: int, language: str, filter_type: str = "all", min_len: int = 0, max_len: Optional[int] = None
-) -> List[Dict]:
+) -> List[Review]:
     """
     Downloads reviews using the steamreviews library.
 
@@ -78,101 +185,14 @@ def fetch_reviews(
     2. Content: analyzes the actual review text using 'langdetect'
        to remove false positives (e.g., English reviews tagged as German).
     """
-    request_params = {}
-    if language and language != "all":
-        request_params["language"] = language
-
-    if filter_type:
-        request_params["filter"] = filter_type
-
-    try:
-        # steamreviews usually returns (review_dict, query_count)
-        # We need to trust it returns a dict-like structure.
-        review_data: Dict = steamreviews.download_reviews_for_app_id(app_id, chosen_request_params=request_params)[0]
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Network Error: Could not connect to Steam. Details: {e}")
-        return []
-    except Exception as e:
-        logger.error(f"Error downloading reviews: {e}")
+    request_params = build_review_request_params(language, filter_type)
+    review_data = download_review_payload(app_id, request_params)
+    if review_data is None:
         return []
 
-    reviews = review_data.get("reviews", [])
-    if isinstance(reviews, dict):
-        reviews = list(reviews.values())
-    elif not isinstance(reviews, list):
-        logger.error("Downloaded review payload did not contain a valid reviews list.")
-        return []
-
-    if language and language != "all":
-        # API language codes are lowercase (e.g. 'english', 'schinese')
-        target_lang = language.lower()
-
-        # 1. Metadata Filter: Keep only reviews tagged with the requested language
-        reviews = [r for r in reviews if r.get("language") == target_lang]
-
-        # 2. Content Filter: Use langdetect to verify the text content
-        target_iso = STEAM_LANG_TO_ISO.get(target_lang)
-
-        if target_iso:
-            logger.info(f"Applying content analysis for language '{target_lang}' (ISO: {target_iso})...")
-            filtered_reviews = []
-            removed_count = 0
-
-            for r in reviews:
-                text = r.get("review", "")
-                if not isinstance(text, str):
-                    text = ""
-                # Skip detection for very short texts (unreliable)
-                if len(text) < 10:
-                    filtered_reviews.append(r)
-                    continue
-
-                try:
-                    detected = detect(text)
-                    # Keep if it matches target OR if we are unsure (safe default)
-                    # We only drop if it STRONGLY matched another language?
-                    # Actually, simple equality check is usually enough if langdetect is robust.
-                    # But 'en' often detects 'de' words mixed in.
-                    # Let's be strict: if detected is NOT target_iso, drop it.
-                    if detected == target_iso:
-                        filtered_reviews.append(r)
-                    else:
-                        # Optional: Add a whitelist for common mix-ups if needed.
-                        # For now, strict filtering.
-                        removed_count += 1
-                except LangDetectException:
-                    # Detection failed (e.g. no features), keep it to be safe
-                    filtered_reviews.append(r)
-
-            logger.info(f"Content Filter: Removed {removed_count} reviews that did not match '{target_iso}'.")
-            reviews = filtered_reviews
-
-    # 3. Length Filter
-    if min_len > 0 or max_len is not None:
-        initial_count = len(reviews)
-        filtered_reviews = []
-        for r in reviews:
-            review_text = r.get("review", "")
-            text_len = len(review_text) if isinstance(review_text, str) else 0
-
-            # Check minimum length
-            if text_len < min_len:
-                continue
-
-            # Check maximum length
-            if max_len is not None and text_len > max_len:
-                continue
-
-            filtered_reviews.append(r)
-
-        removed_len = initial_count - len(filtered_reviews)
-        logger.info(
-            f"Length Filter: Removed {removed_len} reviews outside length range "
-            f"[{min_len}, {max_len if max_len is not None else 'Inf'}]."
-        )
-        reviews = filtered_reviews
-
-    return cast(List[Dict], reviews)
+    reviews = normalize_reviews_payload(review_data)
+    reviews = filter_reviews_by_language(reviews, language)
+    return filter_reviews_by_length(reviews, min_len, max_len)
 
 
 def process_reviews(reviews: List[Dict], app_id: int) -> pd.DataFrame:
@@ -220,11 +240,11 @@ def save_to_excel(
     min_len: int = 0,
     max_len: Optional[int] = None,
     output_dir: Optional[Union[str, Path]] = None,
-) -> None:
+) -> bool:
     """Saves the DataFrame to an Excel file with format: {GameName} {Lang} - Reviews {Details}.xlsx"""
     if df.empty:
         logger.warning("No valid review data available to save.")
-        return
+        return False
 
     filename = build_output_filename(game_name, language, filter_type, min_len, max_len)
     output_path = Path(filename)
@@ -235,8 +255,11 @@ def save_to_excel(
     try:
         df.to_excel(str(output_path), index=False)
         logger.info(f"Reviews successfully saved to: {output_path}")
+        return True
     except PermissionError:
         logger.error(f"Error: Permission denied. The file '{output_path}' seems to be open in Excel.")
         logger.error("Please close the file and try again.")
+        return False
     except Exception as e:
         logger.error(f"Error saving file: {e}")
+        return False

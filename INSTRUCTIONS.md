@@ -43,7 +43,7 @@ Default fast checks:
 python -m ruff check .
 python -m ruff format --check .
 python -m mypy .
-python -m pytest -m "not integration" --cov=steamreviews --cov-fail-under=60
+python -m pytest -m "not integration" --cov=steamreviews --cov-fail-under=75
 ```
 
 Integration tests are opt-in:

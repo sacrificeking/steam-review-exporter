@@ -145,66 +145,88 @@ def get_validated_config(args: Optional[argparse.Namespace] = None) -> ReviewExp
         raise
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:
-    args = parse_args(argv)
-    non_interactive = is_non_interactive_config(args)
-    setup_logging(verbose=args.verbose)
+def export_once(config: ReviewExportConfig) -> bool:
+    """Runs one configured review export. Returns True when review data was exported."""
+    game_name = get_game_name(config.app_id)
+    logger.info(f"Fetching reviews for '{game_name}' (AppID {config.app_id})...")
+
+    reviews = fetch_reviews(config.app_id, config.language, config.filter_type, config.min_len, config.max_len)
+
+    if not reviews:
+        logger.warning(f"No reviews found for '{game_name}' (AppID {config.app_id}).")
+        logger.info("Check if the AppID is correct.")
+        logger.info("Check if the game has reviews in the selected language.")
+        return False
+
+    logger.info(f"Downloaded {len(reviews)} reviews. Processing data...")
+    df = process_reviews(reviews, config.app_id)
+    return save_to_excel(
+        df,
+        config.app_id,
+        game_name,
+        config.language,
+        config.filter_type,
+        config.min_len,
+        config.max_len,
+        config.output_dir,
+    )
+
+
+def get_next_config(config: ReviewExportConfig) -> Optional[ReviewExportConfig]:
+    """Prompts for the next interactive AppID while keeping the existing processing parameters."""
+    again = input("\nDo you want to download another game with the same parameters? (y/n): ").strip().lower()
+    if again != "y":
+        return None
+
+    new_app_id = get_app_id()
+    return ReviewExportConfig(
+        app_id=new_app_id,
+        language=config.language,
+        filter_type=config.filter_type,
+        min_len=config.min_len,
+        max_len=config.max_len,
+        output_dir=config.output_dir,
+    )
+
+
+def run_cli(args: argparse.Namespace, non_interactive: bool) -> int:
+    """Runs the CLI workflow and returns a process-style status code."""
     try:
-        # Initial parameters
         config = get_validated_config(args)
+        exported_any = False
 
         while True:
-            game_name = get_game_name(config.app_id)
-            logger.info(f"Fetching reviews for '{game_name}' (AppID {config.app_id})...")
-
-            reviews = fetch_reviews(config.app_id, config.language, config.filter_type, config.min_len, config.max_len)
-
-            if reviews:
-                logger.info(f"Downloaded {len(reviews)} reviews. Processing data...")
-                df = process_reviews(reviews, config.app_id)
-                save_to_excel(
-                    df,
-                    config.app_id,
-                    game_name,
-                    config.language,
-                    config.filter_type,
-                    config.min_len,
-                    config.max_len,
-                    config.output_dir,
-                )
-            else:
-                logger.warning(f"No reviews found for '{game_name}' (AppID {config.app_id}).")
-                logger.info("Check if the AppID is correct.")
-                logger.info("Check if the game has reviews in the selected language.")
+            exported_any = export_once(config) or exported_any
 
             if non_interactive:
                 break
 
-            # Loop check
-            again = input("\nDo you want to download another game with the same parameters? (y/n): ").strip().lower()
-            if again != "y":
+            next_config = get_next_config(config)
+            if next_config is None:
                 break
+            config = next_config
 
-            # Ask for new AppID (and re-validate)
-            # Note: For simplicity in this loop, we just re-ask AppID but keep other params constant,
-            # mirroring original behavior, but wrapped in a new config.
-            new_app_id = get_app_id()
-            config = ReviewExportConfig(
-                app_id=new_app_id,
-                language=config.language,
-                filter_type=config.filter_type,
-                min_len=config.min_len,
-                max_len=config.max_len,
-                output_dir=config.output_dir,
-            )
+        return 0 if exported_any else 1
 
     except KeyboardInterrupt:
         logger.warning("\nOperation cancelled by user.")
+        return 130
     except EOFError:
         logger.error("\nInput stream closed unexpectedly. Exiting.")
+        return 1
+    except pydantic.ValidationError:
+        return 2
     except Exception as e:
         logger.critical(f"\nAn unexpected error occurred: {e}")
+        return 1
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = parse_args(argv)
+    non_interactive = is_non_interactive_config(args)
+    setup_logging(verbose=args.verbose)
+    return run_cli(args, non_interactive)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

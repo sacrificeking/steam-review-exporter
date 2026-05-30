@@ -17,7 +17,7 @@ import pathlib
 import time
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Set, Tuple, Union, cast
+from typing import Any, Dict, Generator, List, Optional, Set, Tuple, TypedDict, Union, cast
 
 import requests
 from tqdm import tqdm
@@ -25,6 +25,22 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 DATA_DIR_ENV_VAR = "STEAM_REVIEWS_DATA_DIR"
+
+ReviewPayload = Dict[str, Any]
+QuerySummary = Dict[str, Any]
+RequestParams = Dict[str, str]
+
+
+class SteamApiResponse(TypedDict, total=False):
+    success: int
+    reviews: List[ReviewPayload]
+    query_summary: QuerySummary
+    cursor: str
+
+
+class TimestampFilter(TypedDict):
+    field: str
+    threshold: float
 
 
 def parse_app_id(app_id: Union[str, int]) -> Optional[int]:
@@ -90,7 +106,7 @@ def get_default_review_type() -> str:
     return "all"
 
 
-def get_default_request_parameters(chosen_request_params: Optional[Dict] = None) -> Dict[str, str]:
+def get_default_request_parameters(chosen_request_params: Optional[Dict] = None) -> RequestParams:
     """
     Returns a dictionary of default parameters for a Steam API request.
 
@@ -114,12 +130,17 @@ def get_default_request_parameters(chosen_request_params: Optional[Dict] = None)
 
 def get_data_path(data_dir: Optional[Union[str, Path]] = None) -> str:
     """Returns the path to the 'data/' directory where reviews are cached locally."""
+    return str(get_data_dir_path(data_dir))
+
+
+def get_data_dir_path(data_dir: Optional[Union[str, Path]] = None) -> Path:
+    """Returns the cache data directory as a Path and ensures it exists."""
     if data_dir is None:
         data_dir = os.environ.get(DATA_DIR_ENV_VAR, "data")
 
     data_path = Path(data_dir)
     data_path.mkdir(parents=True, exist_ok=True)
-    return str(data_path)
+    return data_path
 
 
 def get_steam_api_url() -> str:
@@ -159,7 +180,12 @@ def get_retry_status_codes() -> Set[int]:
 
 def get_output_filename(app_id: int, data_dir: Optional[Union[str, Path]] = None) -> str:
     """Returns the JSON filename for a specific AppID."""
-    return str(Path(get_data_path(data_dir)) / f"review_{app_id}.json")
+    return str(get_output_path(app_id, data_dir))
+
+
+def get_output_path(app_id: int, data_dir: Optional[Union[str, Path]] = None) -> Path:
+    """Returns the JSON cache path for a specific AppID."""
+    return get_data_dir_path(data_dir) / f"review_{app_id}.json"
 
 
 def get_dummy_query_summary() -> Dict[str, int]:
@@ -183,10 +209,10 @@ def load_review_dict(app_id: int, data_dir: Optional[Union[str, Path]] = None) -
     Loads existing reviews for an AppID from the local JSON cache.
     Returns an empty structure if no file exists.
     """
-    review_data_filename = get_output_filename(app_id, data_dir)
+    review_data_path = get_output_path(app_id, data_dir)
 
     try:
-        with Path(review_data_filename).open(encoding="utf8") as in_json_file:
+        with review_data_path.open(encoding="utf8") as in_json_file:
             review_dict = json.load(in_json_file)
 
         # Compatibility with data downloaded with previous versions of steamreviews:
@@ -195,7 +221,7 @@ def load_review_dict(app_id: int, data_dir: Optional[Union[str, Path]] = None) -
     except FileNotFoundError:
         review_dict = get_empty_review_dict()
     except json.JSONDecodeError as error:
-        logger.error(f"Could not parse cached review file '{review_data_filename}': {error}")
+        logger.error(f"Could not parse cached review file '{review_data_path}': {error}")
         review_dict = get_empty_review_dict()
 
     return cast(Dict[str, Any], review_dict)
@@ -203,17 +229,134 @@ def load_review_dict(app_id: int, data_dir: Optional[Union[str, Path]] = None) -
 
 def write_review_dict(app_id: int, review_dict: Dict[str, Any], data_dir: Optional[Union[str, Path]] = None) -> None:
     """Writes cached review data atomically."""
-    output_path = Path(get_output_filename(app_id, data_dir))
+    output_path = get_output_path(app_id, data_dir)
     temp_path = output_path.with_name(output_path.name + ".tmp")
     temp_path.write_text(json.dumps(review_dict) + "\n", encoding="utf8")
     temp_path.replace(output_path)
 
 
-def get_request(app_id: int, chosen_request_params: Optional[Dict] = None) -> Dict[str, str]:
+def get_request(app_id: int, chosen_request_params: Optional[Dict] = None) -> RequestParams:
     """Prepares the request parameters for the API call."""
     request = dict(get_default_request_parameters(chosen_request_params))
     request["appids"] = str(app_id)
     return request
+
+
+def execute_steam_api_request(
+    app_id: int,
+    cursor: str,
+    request_url: str,
+    request_params: RequestParams,
+) -> Optional[requests.Response]:
+    """Executes one Steam API request and logs transport failures."""
+    try:
+        return requests.get(
+            request_url,
+            params=request_params,
+            headers=get_steam_api_headers(),
+            timeout=get_steam_api_request_timeout(),
+        )
+    except requests.exceptions.RequestException as error:
+        logger.error(f"Steam API request failed for appID = {app_id} and cursor = {cursor}: {error}")
+        return None
+
+
+def parse_steam_api_response(
+    app_id: int,
+    cursor: str,
+    response: requests.Response,
+) -> Tuple[bool, List[ReviewPayload], QuerySummary, str]:
+    """Parses one Steam API response into the downloader's internal batch tuple."""
+    if response.status_code != HTTPStatus.OK:
+        logger.error(
+            f"Faulty response status code = {response.status_code} for appID = {app_id} and cursor = {cursor}",
+        )
+        return False, [], get_dummy_query_summary(), cursor
+
+    try:
+        result = response.json()
+    except ValueError as error:
+        logger.error(f"Invalid JSON response for appID = {app_id} and cursor = {cursor}: {error}")
+        return False, [], get_dummy_query_summary(), cursor
+
+    return parse_steam_api_payload(app_id, cursor, result)
+
+
+def parse_steam_api_payload(
+    app_id: int,
+    cursor: str,
+    result: Any,
+) -> Tuple[bool, List[ReviewPayload], QuerySummary, str]:
+    """Validates and parses one decoded Steam API payload."""
+    if not isinstance(result, dict):
+        logger.error(f"Steam API payload was not an object for appID = {app_id} and cursor = {cursor}")
+        return False, [], get_dummy_query_summary(), cursor
+
+    result = cast(SteamApiResponse, result)
+    reviews = result.get("reviews")
+    query_summary = result.get("query_summary")
+    next_cursor = result.get("cursor")
+
+    if not isinstance(reviews, list):
+        logger.error(f"Steam API payload did not include a valid reviews list for appID = {app_id}")
+        return False, [], get_dummy_query_summary(), cursor
+
+    if not isinstance(query_summary, dict):
+        logger.error(f"Steam API payload did not include a valid query_summary object for appID = {app_id}")
+        return False, [], get_dummy_query_summary(), cursor
+
+    if not isinstance(next_cursor, str):
+        logger.error(f"Steam API payload did not include a valid cursor string for appID = {app_id}")
+        return False, [], get_dummy_query_summary(), cursor
+
+    success_flag = bool(result.get("success") == 1)
+    return success_flag, reviews, query_summary, next_cursor
+
+
+def build_timestamp_filter(request: Dict[str, str], verbose: bool = False) -> Optional[TimestampFilter]:
+    """Builds local timestamp filtering config for day-range Steam queries."""
+    if "day_range" not in request or request["filter"] == "all":
+        return None
+
+    current_date = datetime.datetime.now(tz=datetime.UTC)
+    num_days = int(request["day_range"])
+    date_threshold = current_date - datetime.timedelta(days=num_days)
+    timestamp_threshold = datetime.datetime.timestamp(date_threshold)
+    timestamp_field = "timestamp_updated" if request["filter"] == "updated" else "timestamp_created"
+
+    if verbose:
+        collection_keyword = "edited" if request["filter"] == "updated" else "first posted"
+        logger.debug(f"Collecting reviews {collection_keyword} after {date_threshold}")
+
+    return {"field": timestamp_field, "threshold": timestamp_threshold}
+
+
+def apply_timestamp_filter(reviews: List[Dict], timestamp_filter: Optional[TimestampFilter]) -> List[Dict]:
+    """Filters downloaded reviews by timestamp when a local timestamp filter is active."""
+    if timestamp_filter is None:
+        return reviews
+
+    timestamp_field = timestamp_filter["field"]
+    timestamp_threshold = timestamp_filter["threshold"]
+    return [review for review in reviews if review[timestamp_field] > timestamp_threshold]
+
+
+def get_downloaded_review_ids(reviews: List[Dict]) -> List[Any]:
+    """Returns recommendation IDs from downloaded reviews."""
+    return [review["recommendationid"] for review in reviews]
+
+
+def is_redundant_batch(new_review_ids: Set[Any], downloaded_review_ids: List[Any]) -> bool:
+    """Returns True when the latest batch contains only review IDs already seen in this run."""
+    return new_review_ids.issuperset(downloaded_review_ids)
+
+
+def merge_new_reviews(review_dict: Dict[str, Any], reviews: List[Dict], previous_review_ids: Set[Any]) -> None:
+    """Merges newly downloaded reviews into the cache, preserving existing entries."""
+    for review in reviews:
+        review_id = review["recommendationid"]
+        if review_id not in previous_review_ids:
+            review_dict["reviews"][review_id] = review
 
 
 def download_the_full_query_summary(
@@ -281,19 +424,12 @@ def download_reviews_for_app_id_with_offset(
     request_url = get_steam_api_url() + req_data["appids"]
     retry_status_codes = get_retry_status_codes()
 
-    try:
-        resp_data = requests.get(
-            request_url,
-            params=req_data,
-            headers=get_steam_api_headers(),
-            timeout=get_steam_api_request_timeout(),
-        )
-        status_code = resp_data.status_code
-        query_count += 1
-    except requests.exceptions.RequestException as error:
-        query_count += 1
-        logger.error(f"Steam API request failed for appID = {app_id} and cursor = {cursor}: {error}")
+    resp_data = execute_steam_api_request(app_id, cursor, request_url, req_data)
+    query_count += 1
+    if resp_data is None:
         return False, [], get_dummy_query_summary(), query_count, cursor
+
+    status_code = resp_data.status_code
 
     # Handle temporary Steam API failures.
     while (status_code in retry_status_codes) and (query_count < rate_limits["max_num_queries"]):
@@ -305,43 +441,14 @@ def download_reviews_for_app_id_with_offset(
         for _ in tqdm(range(cooldown_duration_for_bad_gateway), desc="Bad Gateway Cooldown"):
             time.sleep(1)
 
-        try:
-            resp_data = requests.get(
-                request_url,
-                params=req_data,
-                headers=get_steam_api_headers(),
-                timeout=get_steam_api_request_timeout(),
-            )
-            status_code = resp_data.status_code
-            query_count += 1
-        except requests.exceptions.RequestException as error:
-            query_count += 1
-            logger.error(f"Steam API retry failed for appID = {app_id} and cursor = {cursor}: {error}")
+        resp_data = execute_steam_api_request(app_id, cursor, request_url, req_data)
+        query_count += 1
+        if resp_data is None:
             return False, [], get_dummy_query_summary(), query_count, cursor
 
-    if status_code == HTTPStatus.OK:
-        try:
-            result = resp_data.json()
-        except ValueError as error:
-            result = {"success": 0}
-            logger.error(f"Invalid JSON response for appID = {app_id} and cursor = {cursor}: {error}")
-    else:
-        result = {"success": 0}
-        logger.error(
-            f"Faulty response status code = {status_code} for appID = {app_id} and cursor = {cursor}",
-        )
+        status_code = resp_data.status_code
 
-    success_flag = bool(result.get("success") == 1)
-
-    try:
-        downloaded_reviews = result["reviews"]
-        query_summary = result["query_summary"]
-        next_cursor = result["cursor"]
-    except KeyError:
-        success_flag = False
-        downloaded_reviews = []
-        query_summary = get_dummy_query_summary()
-        next_cursor = cursor
+    success_flag, downloaded_reviews, query_summary, next_cursor = parse_steam_api_response(app_id, cursor, resp_data)
 
     return success_flag, downloaded_reviews, query_summary, query_count, next_cursor
 
@@ -365,24 +472,7 @@ def download_reviews_for_app_id(
     rate_limits = get_steam_api_rate_limits()
 
     request = dict(get_default_request_parameters(chosen_request_params))
-
-    # Check if we need to filter by day range locally (optimistic early exit)
-    check_review_timestamp = bool(
-        "day_range" in request and request["filter"] != "all",
-    )
-    if check_review_timestamp:
-        current_date = datetime.datetime.now(tz=datetime.UTC)
-        num_days = int(request["day_range"])
-        date_threshold = current_date - datetime.timedelta(days=num_days)
-        timestamp_threshold = datetime.datetime.timestamp(date_threshold)
-        if verbose:
-            if request["filter"] == "updated":
-                collection_keyword = "edited"
-            else:
-                collection_keyword = "first posted"
-            logger.debug(
-                f"Collecting reviews {collection_keyword} after {date_threshold}",
-            )
+    timestamp_filter = build_timestamp_filter(request, verbose)
 
     review_dict = load_review_dict(app_id, data_dir)
 
@@ -432,37 +522,21 @@ def download_reviews_for_app_id(
             offset += delta_reviews
 
             if success_flag and delta_reviews > 0:
-                if check_review_timestamp:
-                    if request["filter"] == "updated":
-                        timestamp_str_field = "timestamp_updated"
-                    else:
-                        timestamp_str_field = "timestamp_created"
-
-                    checked_reviews = list(
-                        filter(
-                            lambda x: x[timestamp_str_field] > timestamp_threshold,
-                            downloaded_reviews,
-                        ),
-                    )
-
-                    delta_checked_reviews = len(checked_reviews)
-
-                    if delta_checked_reviews == 0:
-                        if verbose:
-                            logger.info(
-                                "Exiting the loop to query Steam API, because the timestamp threshold was reached.",
-                            )
-                        break
-
-                    downloaded_reviews = checked_reviews
+                downloaded_reviews = apply_timestamp_filter(downloaded_reviews, timestamp_filter)
+                if timestamp_filter is not None and not downloaded_reviews:
+                    if verbose:
+                        logger.info(
+                            "Exiting the loop to query Steam API, because the timestamp threshold was reached.",
+                        )
+                    break
 
                 new_reviews.extend(downloaded_reviews)
 
-                downloaded_review_ids = [review["recommendationid"] for review in downloaded_reviews]
+                downloaded_review_ids = get_downloaded_review_ids(downloaded_reviews)
 
                 # Detect full redundancy in the latest downloaded reviews
                 # This suggests we hit the end of new content, or the API is looping.
-                if new_review_ids.issuperset(downloaded_review_ids):
+                if is_redundant_batch(new_review_ids, downloaded_review_ids):
                     if verbose:
                         logger.info(
                             "Exiting the loop to query Steam API, "
@@ -522,10 +596,7 @@ def download_reviews_for_app_id(
     # Keep track of the cursor
     review_dict["cursors"][str(cursor)] = time.asctime()
 
-    for review in new_reviews:
-        review_id = review["recommendationid"]
-        if review_id not in previous_review_ids:
-            review_dict["reviews"][review_id] = review
+    merge_new_reviews(review_dict, new_reviews, previous_review_ids)
 
     write_review_dict(app_id, review_dict, data_dir)
 
