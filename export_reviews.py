@@ -205,11 +205,14 @@ def get_validated_config(args: argparse.Namespace | None = None) -> ReviewExport
 
 
 async def export_once(config: ReviewExportConfig) -> bool:
-    """Runs one configured review export. Returns True when review data was exported."""
     game_name = get_game_name(config.app_id)
-    logger.info(f"Fetching reviews for '{game_name}' (AppID {config.app_id})...")
 
-    reviews = await fetch_reviews(config.app_id, config.language, config.filter_type, config.min_len, config.max_len, config.output_dir)
+    logger.info(f"Starting review export for App ID {config.app_id} ({game_name})...")
+
+    # We use SQLite storage for the CLI implementation
+    reviews = await fetch_reviews(
+        config.app_id, config.language, config.filter_type, config.min_len, config.max_len, config.output_dir
+    )
 
     if not reviews:
         logger.warning(f"No reviews found for '{game_name}' (AppID {config.app_id}).")

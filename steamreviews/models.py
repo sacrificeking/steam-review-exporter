@@ -25,6 +25,7 @@ class ReviewExportConfig(BaseModel):
             raise ValueError("Maximum review length must be greater than or equal to minimum review length")
         return self
 
+
 class SteamReviewAuthor(BaseModel):
     steamid: str
     num_games_owned: int = 0
@@ -33,6 +34,7 @@ class SteamReviewAuthor(BaseModel):
     playtime_last_two_weeks: int = 0
     playtime_at_review: int = 0
     last_played: int = 0
+
 
 class SteamReview(BaseModel):
     recommendationid: str
@@ -52,6 +54,7 @@ class SteamReview(BaseModel):
     hidden_in_steam_china: bool = False
     steam_china_banned: bool = False
 
+
 class SteamQuerySummary(BaseModel):
     num_reviews: int = 0
     review_score: int = 0
@@ -59,6 +62,7 @@ class SteamQuerySummary(BaseModel):
     total_positive: int = 0
     total_negative: int = 0
     total_reviews: int = 0
+
 
 class SteamApiResponse(BaseModel):
     success: int

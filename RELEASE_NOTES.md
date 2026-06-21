@@ -1,25 +1,45 @@
 # Steam Review Exporter Release Notes
 
-## v2.0.1 (Hotfix & Remediation)
+## v2.0.1 (Architecture Remediation & Web-Readiness)
 
-This release addresses critical bugs, test failures, and architecture bottlenecks identified in the `v2.0.0` architectural overhaul. 
+Dieses Release behebt primär kritische konzeptionelle Fehler und Flaschenhälse, die in der Version `v2.0.0` aufgetreten sind. Die Änderungen stellen sicher, dass die Architektur nicht nur für das CLI fehlerfrei und robust läuft, sondern auch sauber in externe Web- und Edge-Technologien integriert werden kann.
 
-### Critical Bug Fixes
-- **API Retry Loop & Hangs:** Fixed an issue where the CLI could hang indefinitely when encountering rate limits (HTTP 429/500+). Implemented a hard limit (`MAX_RETRIES = 5`) and exponential backoff.
-- **SQLite DB Locking (Windows):** Fixed a severe bug where the SQLite database connections were leaked and left open on Windows, preventing downstream tools and file-system cleanup from functioning. Added `with sqlite3.connect` and `conn.close()` in `finally` blocks for transactional integrity.
+### 🛠️ Critical Bug Fixes & Hotfixes
 
-### Architecture Improvements
-- **Run Isolation & Cache Context Mixing:** The SQLite Cache now acts as a true database. Generated a unique `run_id` for every scraper execution. `export.py` now queries reviews linked *only* to the current `run_id`, preventing exports from pulling in reviews downloaded during previous disjoint filter runs.
-- **SQLite Cursor Tracking:** Overhauled the cursor loop protection. Cursors are now tracked securely by a SHA256 hash of the `request_params` (`params_hash`). This allows the scraper to cache cursors for different filters simultaneously without erroneously aborting loops.
+- **API Retry Loop & Hangs:** Es wurde ein Problem behoben, bei dem das CLI endlos hängen bleiben konnte, wenn Rate-Limits (HTTP 429/500+) auftraten. Es greift nun ein hartes Limit (`MAX_RETRIES = 5`) mit sauberem Exponential Backoff.
+- **SQLite DB Locking (Windows):** Ein schwerer Bug wurde behoben, bei dem offene SQLite-Datenbankverbindungen unter Windows Dateisystem-Sperren verursachten.
+- **Run Isolation & Cache Context Mixing:** Das Cache-Verhalten wurde korrigiert, um Export-Vermischungen bei unterschiedlichen Filter-Läufen zu verhindern.
+- **Infinite Loop Protection:** Der Paginierungs-Loop-Schutz wurde komplett überarbeitet. Cursors werden nun sicher über einen SHA256-Hash der Request-Parameter getrackt. So werden fehlerhafte Steam-Paginierungen sofort über einen `SteamCursorLoopError` abgebrochen.
 
-### Testing & QA (Fast-Gates)
-- **100% Test Pass Rate:** Fixed all broken tests. Wrote new test files for `api.py`, `scraper.py`, `cache.py`, and `export.py`.
-- **Coverage Increased:** Test coverage successfully raised from 54% to **89.27%** (Target: 75%).
-- **Linting & Typing:** Brought the codebase back into full compliance with `ruff check` and `mypy` strict type-checking. All Pydantic model types correctly cast and validated.
+### 🏗️ Konzeptionelle Architektur-Korrekturen
+
+- **Dependency Inversion (Storage-Abstraktion):** Die harte Kopplung an SQLite war ein architektonischer Fehler für zustandslose Umgebungen. SQLite wurde hinter ein `ReviewStorageProtocol` abstrahiert. Zusätzlich wurden `MemoryStorage` und `NullStorage` für Edge/Web-Szenarien implementiert.
+- **Asynchrones Streaming:** Statt riesige Datenmengen auf einmal im RAM zu sammeln, stellt der `SteamReviewScraper` jetzt `fetch_reviews_stream()` bereit. Dies ermöglicht echtes Chunking/Streaming an Frontends ohne Timeouts.
+- **Leichtgewichtiger Core:** Schwere Abhängigkeiten (`polars` und `xlsxwriter`) wurden konsequenterweise in die `[project.optional-dependencies]` ausgelagert, um den Footprint in Microservices zu minimieren.
+
+### 🛡️ Web-Kompatibilität & Error Handling
+
+- **Exakte Exception-Hierarchie:** Statt Fehler stillschweigend mit `None` zu quittieren, werden nun saubere Errors geworfen (`SteamRateLimitError`, `SteamUnavailableError`, `SteamValidationError`). Diese können von Web-APIs direkt in HTTP-Statuscodes (z.B. 429, 503) gemappt werden.
+- **Fail-Fast Rate Limiting:** Über das neue Flag `raise_on_rate_limit` im `SteamAPIClient` kann konfiguriert werden, ob der Scraper sich schlafen legt (CLI) oder sofort abbricht (Edge Function).
+
+### 🧪 Quality Gates & Tests
+
+- **Test-Coverage & Linter:** Alle Tests wurden repariert und massiv erweitert (insbesondere für Exception-Passthroughs und den asynchronen Stream). Die Test-Coverage stieg von 54% auf knapp 90%. Alle `ruff` und `mypy` Fehler wurden restlos eliminiert.
+
+### 🔧 Upgrade Guide für Nutzer
+
+Für bestehende Nutzer des **CLI-Tools** ändert sich nichts an der Bedienung.
+Wer das Projekt **als Bibliothek** nutzen möchte, installiert nun zielgerichtet:
+```bash
+pip install steamreviews         # Für den schlanken, Web-Ready Core
+pip install steamreviews[cli]    # Inklusive Polars und Excel-Support
+```
+
+
 
 ---
 
-## 2.0.0
+## v2.0.0
 
 Massive "State of the Art" architectural rewrite to maximize performance, reliability, and modern web-readiness.
 

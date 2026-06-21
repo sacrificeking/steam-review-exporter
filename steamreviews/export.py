@@ -2,9 +2,16 @@ import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import polars as pl
+try:
+    import polars as pl
+except ImportError:
+    pl = None  # type: ignore
+
+if TYPE_CHECKING:
+    import polars as _pl
+
 from langdetect import LangDetectException, detect
 
 from steamreviews.scraper import SteamReviewScraper
@@ -30,9 +37,11 @@ STEAM_LANG_TO_ISO = {
     "brazilian": "pt",
 }
 
+
 def sanitize_filename_part(text: str) -> str:
     sanitized = re.sub(r"[^\w\-\s]", "", text)
     return sanitized.strip() or "unknown"
+
 
 def sanitize_excel_text(text: str) -> str:
     """Prefixes potentially executable Excel cell text with an apostrophe to prevent CSV/Formula injection."""
@@ -40,6 +49,7 @@ def sanitize_excel_text(text: str) -> str:
     if stripped.startswith(EXCEL_FORMULA_PREFIXES):
         return "'" + text
     return text
+
 
 def build_output_filename(
     game_name: str,
@@ -61,6 +71,7 @@ def build_output_filename(
 
     return f"{safe_game_name} {lang_iso} - Reviews {' '.join(details)}.xlsx"
 
+
 def build_review_request_params(language: str, filter_type: str = "all") -> dict[str, str]:
     request_params = {"json": "1", "num_per_page": "100"}
     if language and language != "all":
@@ -68,6 +79,7 @@ def build_review_request_params(language: str, filter_type: str = "all") -> dict
     if filter_type:
         request_params["filter"] = filter_type
     return request_params
+
 
 def filter_reviews_by_language(
     reviews: list[Review],
@@ -109,6 +121,7 @@ def filter_reviews_by_language(
     logger.info(f"Content Filter: Removed {removed_count} reviews that did not match '{target_iso}'.")
     return content_filtered_reviews
 
+
 def filter_reviews_by_length(reviews: list[Review], min_len: int = 0, max_len: int | None = None) -> list[Review]:
     if min_len <= 0 and max_len is None:
         return reviews
@@ -132,22 +145,34 @@ def filter_reviews_by_length(reviews: list[Review], min_len: int = 0, max_len: i
     )
     return filtered_reviews
 
+
 async def fetch_reviews(
-    app_id: int, language: str, filter_type: str = "all", min_len: int = 0, max_len: int | None = None, output_dir: str | None = None
-) -> list[Review]:
-    scraper = SteamReviewScraper(data_dir=output_dir)
+    app_id: int,
+    language: str,
+    filter_type: str = "all",
+    min_len: int = 0,
+    max_len: int | None = None,
+    output_dir: str | None = None,
+) -> list[dict[str, Any]]:
+    from steamreviews.storage import SQLiteStorage
+
+    storage = SQLiteStorage(data_dir=output_dir if output_dir else "data")
+    scraper = SteamReviewScraper(storage=storage)
     request_params = build_review_request_params(language, filter_type)
-    
+
     success = await scraper.fetch_all_reviews(app_id, request_params)
     if not success:
         logger.error("Fetch reviews encountered an error.")
         # We can still process what we have in cache
-        
-    reviews = scraper.cache.load_run_reviews(scraper.run_id, app_id)
+
+    reviews = scraper.storage.load_run_reviews(scraper.run_id, app_id)
     reviews = filter_reviews_by_language(reviews, language)
     return filter_reviews_by_length(reviews, min_len, max_len)
 
-def process_reviews(reviews: list[dict], app_id: int) -> pl.DataFrame:
+
+def process_reviews(reviews: list[dict], app_id: int) -> "_pl.DataFrame":
+    if pl is None:
+        raise ImportError("Polars is required to process reviews into DataFrames. Install with `pip install polars`.")
     processed_data = []
 
     for raw_review in reviews:
@@ -179,8 +204,9 @@ def process_reviews(reviews: list[dict], app_id: int) -> pl.DataFrame:
 
     return df
 
+
 def save_to_excel(
-    df: pl.DataFrame,
+    df: "_pl.DataFrame",
     app_id: int,
     game_name: str,
     language: str,

@@ -1,16 +1,21 @@
-from .api import SteamAPIClient
-from .cache import SQLiteCache
+from .api import SteamAPIClient, SteamAPIError, SteamRateLimitError, SteamUnavailableError, SteamValidationError
 from .export import fetch_reviews, process_reviews, save_to_excel
-from .models import SteamApiResponse, SteamReview
-from .scraper import SteamReviewScraper
+from .scraper import SteamCursorLoopError, SteamReviewScraper
+from .storage import MemoryStorage, NullStorage, ReviewStorageProtocol, SQLiteStorage
 
 __all__ = [
-    "SQLiteCache",
+    "MemoryStorage",
+    "NullStorage",
+    "ReviewStorageProtocol",
+    "SQLiteStorage",
     "SteamAPIClient",
-    "SteamApiResponse",
-    "SteamReview",
+    "SteamAPIError",
+    "SteamCursorLoopError",
+    "SteamRateLimitError",
     "SteamReviewScraper",
+    "SteamUnavailableError",
+    "SteamValidationError",
     "fetch_reviews",
     "process_reviews",
-    "save_to_excel"
+    "save_to_excel",
 ]
