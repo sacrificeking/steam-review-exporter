@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "steam-review-exporter"
-version = "1.0.1"
+version = "2.0.0"
 description = "Command-line tool to download Steam reviews and export them to Excel."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,13 +20,13 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "requests>=2.32.4",
-    "pandas",
-    "openpyxl",
-    "tqdm",
+    "httpx>=0.27.0",
+    "polars>=1.0.0",
+    "xlsxwriter>=3.2.0",
+    "tqdm>=4.66.0",
     "langdetect",
     "rich",
-    "pydantic",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -35,7 +35,7 @@ dev = [
     "mypy",
     "pytest",
     "pytest-cov",
-    "types-requests",
+    "pytest-asyncio",
 ]
 
 [project.urls]
@@ -60,7 +60,7 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "B"]  # Pyflakes, pycodestyle, bugbear
+select = ["E", "F", "B", "I", "UP", "SIM", "RUF"]  # Pyflakes, pycodestyle, bugbear, isort, pyupgrade, flake8-simplify, ruff
 ignore = []
 
 [tool.mypy]

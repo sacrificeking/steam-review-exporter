@@ -1,9 +1,11 @@
 import argparse
+import asyncio
 import logging
+import urllib.parse
 from typing import Tuple, Optional, Literal, Sequence
 
+import httpx
 import pydantic
-import requests
 
 from steamreviews.utils import setup_logging
 from steamreviews.export import fetch_reviews, process_reviews, save_to_excel
@@ -51,12 +53,67 @@ def is_non_interactive_config(args: argparse.Namespace) -> bool:
     )
 
 
+def search_game_by_name(query: str) -> Optional[int]:
+    """
+    Queries the Steam Store search API for a game name.
+    If multiple matches are found, lists them and prompts the user to select one.
+    Returns the resolved AppID, or None if no match was selected/found.
+    """
+    try:
+        url = f"https://store.steampowered.com/api/storesearch/?term={urllib.parse.quote(query)}&l=english&cc=US"
+        with httpx.Client(timeout=10) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            data = response.json()
+
+        if not data or not data.get("items"):
+            print(f"\nNo games found matching '{query}'.")
+            return None
+
+        items = data["items"]
+        print(f"\nFound {len(items)} matching games on Steam:")
+        for idx, item in enumerate(items, 1):
+            name = item.get("name", "Unknown")
+            app_id = item.get("id")
+            price_info = ""
+            if "price" in item and item["price"]:
+                price_val = item["price"].get("final", 0) / 100
+                currency = item["price"].get("currency", "USD")
+                price_info = f" ({price_val:.2f} {currency})"
+            print(f"  [{idx}] {name} (AppID: {app_id}){price_info}")
+
+        print("  [c] Cancel search")
+
+        choice = input(f"\nPlease select a game number (1-{len(items)}) or 'c' to cancel: ").strip().lower()
+        if choice == "c" or not choice:
+            return None
+
+        if choice.isdigit():
+            selected_idx = int(choice) - 1
+            if 0 <= selected_idx < len(items):
+                return int(items[selected_idx]["id"])
+
+        print("Invalid choice.")
+        return None
+    except Exception as e:
+        logger.warning(f"Error searching for game: {e}")
+        return None
+
+
 def get_app_id() -> int:
-    """Queries App-ID from the user."""
-    app_id_input = input("Please enter the Steam App-ID (e.g. 588650 for Dead Cells):\n").strip()
-    while not app_id_input.isdigit():
-        app_id_input = input("Invalid input. Please enter a numeric App-ID:\n").strip()
-    return int(app_id_input)
+    """Queries App-ID or game name from the user."""
+    while True:
+        app_id_input = input("Please enter the Steam App-ID or game name (e.g. 588650 or 'Dead Cells'):\n").strip()
+        if not app_id_input:
+            continue
+
+        if app_id_input.isdigit():
+            return int(app_id_input)
+
+        # Treat as search query
+        app_id = search_game_by_name(app_id_input)
+        if app_id is not None:
+            return app_id
 
 
 def get_processing_params() -> Tuple[str, FilterType, int, Optional[int]]:
@@ -91,15 +148,16 @@ def get_game_name(app_id: int) -> str:
     """Fetches the game name from the Steam Store API."""
     try:
         url = f"https://store.steampowered.com/api/appdetails?appids={app_id}"
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+        with httpx.Client(timeout=10) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            data = response.json()
 
         if data and str(app_id) in data:
             success = data[str(app_id)].get("success", False)
             if success:
                 return str(data[str(app_id)]["data"]["name"])
-    except (KeyError, TypeError, ValueError, requests.exceptions.RequestException) as e:
+    except (KeyError, TypeError, ValueError, httpx.RequestError) as e:
         logger.warning(f"Warning: Could not fetch game name: {e}")
 
     return str(app_id)
@@ -145,12 +203,12 @@ def get_validated_config(args: Optional[argparse.Namespace] = None) -> ReviewExp
         raise
 
 
-def export_once(config: ReviewExportConfig) -> bool:
+async def export_once(config: ReviewExportConfig) -> bool:
     """Runs one configured review export. Returns True when review data was exported."""
     game_name = get_game_name(config.app_id)
     logger.info(f"Fetching reviews for '{game_name}' (AppID {config.app_id})...")
 
-    reviews = fetch_reviews(config.app_id, config.language, config.filter_type, config.min_len, config.max_len)
+    reviews = await fetch_reviews(config.app_id, config.language, config.filter_type, config.min_len, config.max_len, config.output_dir)
 
     if not reviews:
         logger.warning(f"No reviews found for '{game_name}' (AppID {config.app_id}).")
@@ -189,14 +247,15 @@ def get_next_config(config: ReviewExportConfig) -> Optional[ReviewExportConfig]:
     )
 
 
-def run_cli(args: argparse.Namespace, non_interactive: bool) -> int:
+async def run_cli(args: argparse.Namespace, non_interactive: bool) -> int:
     """Runs the CLI workflow and returns a process-style status code."""
     try:
         config = get_validated_config(args)
         exported_any = False
 
         while True:
-            exported_any = export_once(config) or exported_any
+            result = await export_once(config)
+            exported_any = result or exported_any
 
             if non_interactive:
                 break
@@ -225,7 +284,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     non_interactive = is_non_interactive_config(args)
     setup_logging(verbose=args.verbose)
-    return run_cli(args, non_interactive)
+    return asyncio.run(run_cli(args, non_interactive))
 
 
 if __name__ == "__main__":

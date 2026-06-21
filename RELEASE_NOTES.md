@@ -1,5 +1,25 @@
 # Steam Review Exporter Release Notes
 
+## 2.0.0
+
+Massive "State of the Art" architectural rewrite to maximize performance, reliability, and modern web-readiness.
+
+### Highlights
+
+- **SQLite Database Caching**: Replaced monolithic JSON file caching with a high-performance SQLite database (`steam_reviews.db`). Eliminates massive RAM usage spikes and ensures crash-proof incremental saving.
+- **Asynchronous Networking**: Replaced synchronous `requests` with asynchronous `httpx` and `asyncio`. Internal API is now non-blocking and ready for modern web framework integration (FastAPI, Next.js).
+- **Polars Data Processing**: Replaced `pandas` with `polars` (Rust-based) for lightning-fast memory-efficient data processing and Excel exporting.
+- **Infinite Loop Protection**: Added strict database-level cursor tracking to definitively prevent infinite API pagination loops.
+- **Enhanced Security**: Hardened CSV/Formula injection prevention during Excel export.
+- **Strict Linting & Validation**: Added strict `Pydantic` validation models for all incoming Steam API payloads.
+
+### Breaking Changes
+
+- Removed `steamreviews.download_reviews` module completely. The internal library API was heavily refactored into `steamreviews.api`, `steamreviews.scraper`, and `steamreviews.cache`.
+- Export module functions and CLI logic now rely on `async`/`await`.
+- Development dependencies now include `pytest-asyncio` instead of `types-requests`.
+
+
 ## 1.0.1
 
 Patch release focused on release reliability, CLI exit correctness, export safety, and internal hardening.

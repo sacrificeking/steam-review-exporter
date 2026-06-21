@@ -1,9 +1,10 @@
 import importlib.metadata as metadata
+from unittest.mock import patch, MagicMock
 
 import pytest
 import pydantic
 
-from export_reviews import get_validated_config, main, parse_args, run_cli
+from export_reviews import get_validated_config, main, parse_args, run_cli, search_game_by_name, get_app_id
 
 
 def get_console_script_entrypoint() -> metadata.EntryPoint:
@@ -58,10 +59,11 @@ def test_get_validated_config_from_args():
 
 def test_main_returns_success_and_does_not_prompt_again_in_non_interactive_mode(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
-    monkeypatch.setattr(
-        "export_reviews.fetch_reviews",
-        lambda app_id, language, filter_type, min_len, max_len: [{"review": "Nice", "author": {}}],
-    )
+    
+    async def mock_fetch(*args, **kwargs):
+        return [{"review": "Nice"}]
+    monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
+    
     monkeypatch.setattr("export_reviews.process_reviews", lambda reviews, app_id: object())
     monkeypatch.setattr("export_reviews.save_to_excel", lambda *args, **kwargs: True)
     monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail(f"Unexpected prompt: {prompt}"))
@@ -71,7 +73,10 @@ def test_main_returns_success_and_does_not_prompt_again_in_non_interactive_mode(
 
 def test_main_returns_failure_when_no_reviews_are_found(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
-    monkeypatch.setattr("export_reviews.fetch_reviews", lambda *args, **kwargs: [])
+    
+    async def mock_fetch(*args, **kwargs):
+        return []
+    monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
     monkeypatch.setattr("export_reviews.process_reviews", lambda *args, **kwargs: pytest.fail("Unexpected processing"))
     monkeypatch.setattr("export_reviews.save_to_excel", lambda *args, **kwargs: pytest.fail("Unexpected export"))
 
@@ -81,7 +86,7 @@ def test_main_returns_failure_when_no_reviews_are_found(monkeypatch):
 def test_main_returns_failure_when_downloader_raises(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
 
-    def raise_download_error(*args, **kwargs):
+    async def raise_download_error(*args, **kwargs):
         raise RuntimeError("download failed")
 
     monkeypatch.setattr("export_reviews.fetch_reviews", raise_download_error)
@@ -91,7 +96,10 @@ def test_main_returns_failure_when_downloader_raises(monkeypatch):
 
 def test_main_returns_failure_when_export_raises(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
-    monkeypatch.setattr("export_reviews.fetch_reviews", lambda *args, **kwargs: [{"review": "Nice", "author": {}}])
+    
+    async def mock_fetch(*args, **kwargs):
+        return [{"review": "Nice"}]
+    monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
     monkeypatch.setattr("export_reviews.process_reviews", lambda *args, **kwargs: object())
 
     def raise_export_error(*args, **kwargs):
@@ -104,7 +112,10 @@ def test_main_returns_failure_when_export_raises(monkeypatch):
 
 def test_main_returns_failure_when_export_is_not_written(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
-    monkeypatch.setattr("export_reviews.fetch_reviews", lambda *args, **kwargs: [{"review": "Nice", "author": {}}])
+    
+    async def mock_fetch(*args, **kwargs):
+        return [{"review": "Nice"}]
+    monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
     monkeypatch.setattr("export_reviews.process_reviews", lambda *args, **kwargs: object())
     monkeypatch.setattr("export_reviews.save_to_excel", lambda *args, **kwargs: False)
 
@@ -129,7 +140,8 @@ def test_run_cli_returns_config_error_for_invalid_config(monkeypatch):
 
     monkeypatch.setattr("export_reviews.get_validated_config", raise_validation_error)
 
-    assert run_cli(args, non_interactive=True) == 2
+    import asyncio
+    assert asyncio.run(run_cli(args, non_interactive=True)) == 2
 
 
 def test_installed_console_script_entrypoint_points_to_main():
@@ -143,10 +155,11 @@ def test_installed_console_script_wrapper_converts_success_return_code(monkeypat
     entry_point = get_console_script_entrypoint()
     cli_main = entry_point.load()
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
-    monkeypatch.setattr(
-        "export_reviews.fetch_reviews",
-        lambda app_id, language, filter_type, min_len, max_len: [{"review": "Nice", "author": {}}],
-    )
+    
+    async def mock_fetch(*args, **kwargs):
+        return [{"review": "Nice"}]
+    monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
+    
     monkeypatch.setattr("export_reviews.process_reviews", lambda reviews, app_id: object())
     monkeypatch.setattr("export_reviews.save_to_excel", lambda *args, **kwargs: True)
 
@@ -164,3 +177,63 @@ def test_installed_console_script_wrapper_preserves_parse_error_code():
         raise SystemExit(cli_main(["--app-id", "588650"]))
 
     assert exc_info.value.code == 2
+
+
+@patch("export_reviews.httpx.Client")
+def test_search_game_by_name_no_results(mock_client):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"successful": True, "items": []}
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    result = search_game_by_name("NonExistentGame")
+    assert result is None
+    mock_get.assert_called_once()
+
+
+@patch("export_reviews.httpx.Client")
+def test_search_game_by_name_multiple_results_select_first(mock_client, monkeypatch):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "items": [
+            {"name": "Dead Cells", "id": 588650, "price": {"final": 2499, "currency": "USD"}},
+            {"name": "Dead Cells Soundtrack", "id": 665380}
+        ]
+    }
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    inputs = ["1"]
+    monkeypatch.setattr("builtins.input", lambda prompt: inputs.pop(0))
+
+    result = search_game_by_name("Dead Cells")
+    assert result == 588650
+
+
+@patch("export_reviews.httpx.Client")
+def test_search_game_by_name_cancel(mock_client, monkeypatch):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "items": [{"name": "Dead Cells", "id": 588650}]
+    }
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    inputs = ["c"]
+    monkeypatch.setattr("builtins.input", lambda prompt: inputs.pop(0))
+
+    result = search_game_by_name("Dead Cells")
+    assert result is None
+
+
+def test_get_app_id_accepts_digits_immediately(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda prompt: "588650")
+    assert get_app_id() == 588650
+
+
+def test_get_app_id_triggers_search_and_loops_if_cancelled(monkeypatch):
+    inputs = ["Dead Cells", "588650"]
+    monkeypatch.setattr("builtins.input", lambda prompt: inputs.pop(0))
+
+    with patch("export_reviews.search_game_by_name") as mock_search:
+        mock_search.return_value = None
+        assert get_app_id() == 588650
+        mock_search.assert_called_once_with("Dead Cells")
+

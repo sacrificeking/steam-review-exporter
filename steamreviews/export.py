@@ -1,11 +1,12 @@
-import steamreviews
-import pandas as pd
-import requests
 import re
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
+
+import polars as pl
 from langdetect import detect, LangDetectException
+
+from steamreviews.scraper import SteamReviewScraper
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,6 @@ EXCEL_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 Review = Dict[str, Any]
 LanguageDetector = Callable[[str], str]
 
-# Minimal mapping of Steam language names to ISO 639-1 codes
 STEAM_LANG_TO_ISO = {
     "english": "en",
     "german": "de",
@@ -29,23 +29,16 @@ STEAM_LANG_TO_ISO = {
     "brazilian": "pt",
 }
 
-
 def sanitize_filename_part(text: str) -> str:
-    """
-    Sanitizes a string to be safe for use in a filename.
-    Allows alphanumeric characters, underscores, hyphens, and spaces.
-    """
-    # Replace non-alphanumeric/non-hyphen/non-underscore/non-space with empty string
     sanitized = re.sub(r"[^\w\-\s]", "", text)
     return sanitized.strip() or "unknown"
 
-
 def sanitize_excel_text(text: str) -> str:
-    """Prefixes potentially executable Excel cell text with an apostrophe."""
-    if text.startswith(EXCEL_FORMULA_PREFIXES):
+    """Prefixes potentially executable Excel cell text with an apostrophe to prevent CSV/Formula injection."""
+    stripped = text.lstrip()
+    if stripped.startswith(EXCEL_FORMULA_PREFIXES):
         return "'" + text
     return text
-
 
 def build_output_filename(
     game_name: str,
@@ -54,7 +47,6 @@ def build_output_filename(
     min_len: int = 0,
     max_len: Optional[int] = None,
 ) -> str:
-    """Builds the Excel export filename."""
     safe_game_name = sanitize_filename_part(game_name)
 
     lang_iso = STEAM_LANG_TO_ISO.get(language, language).upper()
@@ -68,50 +60,19 @@ def build_output_filename(
 
     return f"{safe_game_name} {lang_iso} - Reviews {' '.join(details)}.xlsx"
 
-
 def build_review_request_params(language: str, filter_type: str = "all") -> Dict[str, str]:
-    """Builds request parameters for the Steam reviews downloader."""
-    request_params = {}
+    request_params = {"json": "1", "num_per_page": "100"}
     if language and language != "all":
         request_params["language"] = language
-
     if filter_type:
         request_params["filter"] = filter_type
-
     return request_params
-
-
-def download_review_payload(app_id: int, request_params: Dict[str, str]) -> Optional[Dict[str, Any]]:
-    """Downloads raw review payload data from the steamreviews library."""
-    try:
-        return steamreviews.download_reviews_for_app_id(app_id, chosen_request_params=request_params)[0]
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Network Error: Could not connect to Steam. Details: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Error downloading reviews: {e}")
-        return None
-
-
-def normalize_reviews_payload(review_data: Dict[str, Any]) -> List[Review]:
-    """Normalizes Steam review payloads into a list of review dictionaries."""
-    reviews = review_data.get("reviews", [])
-    if isinstance(reviews, dict):
-        return list(reviews.values())
-
-    if isinstance(reviews, list):
-        return reviews
-
-    logger.error("Downloaded review payload did not contain a valid reviews list.")
-    return []
-
 
 def filter_reviews_by_language(
     reviews: List[Review],
     language: str,
     detector: Optional[LanguageDetector] = None,
 ) -> List[Review]:
-    """Filters reviews by Steam metadata and optional content language detection."""
     if not language or language == "all":
         return reviews
 
@@ -147,9 +108,7 @@ def filter_reviews_by_language(
     logger.info(f"Content Filter: Removed {removed_count} reviews that did not match '{target_iso}'.")
     return content_filtered_reviews
 
-
 def filter_reviews_by_length(reviews: List[Review], min_len: int = 0, max_len: Optional[int] = None) -> List[Review]:
-    """Filters reviews by review text length."""
     if min_len <= 0 and max_len is None:
         return reviews
 
@@ -160,7 +119,6 @@ def filter_reviews_by_length(reviews: List[Review], min_len: int = 0, max_len: O
 
         if text_len < min_len:
             continue
-
         if max_len is not None and text_len > max_len:
             continue
 
@@ -173,66 +131,55 @@ def filter_reviews_by_length(reviews: List[Review], min_len: int = 0, max_len: O
     )
     return filtered_reviews
 
-
-def fetch_reviews(
-    app_id: int, language: str, filter_type: str = "all", min_len: int = 0, max_len: Optional[int] = None
+async def fetch_reviews(
+    app_id: int, language: str, filter_type: str = "all", min_len: int = 0, max_len: Optional[int] = None, output_dir: Optional[str] = None
 ) -> List[Review]:
-    """
-    Downloads reviews using the steamreviews library.
-
-    Applies a two-stage language filter:
-    1. Metadata: requests reviews with the specific language tag from Steam.
-    2. Content: analyzes the actual review text using 'langdetect'
-       to remove false positives (e.g., English reviews tagged as German).
-    """
+    scraper = SteamReviewScraper(data_dir=output_dir)
     request_params = build_review_request_params(language, filter_type)
-    review_data = download_review_payload(app_id, request_params)
-    if review_data is None:
-        return []
-
-    reviews = normalize_reviews_payload(review_data)
+    
+    success = await scraper.fetch_all_reviews(app_id, request_params)
+    if not success:
+        logger.error("Fetch reviews encountered an error.")
+        # We can still process what we have in cache
+        
+    reviews = scraper.cache.load_all_reviews(app_id)
     reviews = filter_reviews_by_language(reviews, language)
     return filter_reviews_by_length(reviews, min_len, max_len)
 
-
-def process_reviews(reviews: List[Dict], app_id: int) -> pd.DataFrame:
-    """
-    Processes reviews: generates URLs and sanitizes input to prevent Excel injection.
-    Optimized to run in pure Python before DataFrame creation.
-    """
+def process_reviews(reviews: List[Dict], app_id: int) -> pl.DataFrame:
     processed_data = []
 
     for raw_review in reviews:
         review = dict(raw_review)
 
-        # 1. URL Generation
         author = review.get("author") or {}
         if not isinstance(author, dict):
             author = {}
         steam_id = author.get("steamid")
         review_url = f"https://steamcommunity.com/profiles/{steam_id}/recommended/{app_id}/" if steam_id else ""
 
-        # 2. Excel Injection Protection (Sanitize 'review' text)
         review_text = review.get("review", "")
         if isinstance(review_text, str):
             review["review"] = sanitize_excel_text(review_text)
 
-        # 3. Add URL to the record
+        if "author" in review:
+            for k, v in author.items():
+                review[f"author_{k}"] = v
+            del review["author"]
+
         review["review_url"] = review_url
         processed_data.append(review)
 
-    df = pd.DataFrame(processed_data)
+    df = pl.DataFrame(processed_data, infer_schema_length=1000)
 
-    # Reorder columns to ensure review_url is first if data exists
-    if not df.empty and "review_url" in df.columns:
+    if not df.is_empty() and "review_url" in df.columns:
         cols = ["review_url"] + [c for c in df.columns if c != "review_url"]
-        df = df[cols]
+        df = df.select(cols)
 
     return df
 
-
 def save_to_excel(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     app_id: int,
     game_name: str,
     language: str,
@@ -241,8 +188,7 @@ def save_to_excel(
     max_len: Optional[int] = None,
     output_dir: Optional[Union[str, Path]] = None,
 ) -> bool:
-    """Saves the DataFrame to an Excel file with format: {GameName} {Lang} - Reviews {Details}.xlsx"""
-    if df.empty:
+    if df.is_empty():
         logger.warning("No valid review data available to save.")
         return False
 
@@ -253,7 +199,7 @@ def save_to_excel(
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        df.to_excel(str(output_path), index=False)
+        df.write_excel(str(output_path))
         logger.info(f"Reviews successfully saved to: {output_path}")
         return True
     except PermissionError:

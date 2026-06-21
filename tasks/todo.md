@@ -7,7 +7,7 @@ Persistent task board for agent-assisted development.
 - Repository baseline: `v1.0.0` released.
 - Post-1.0 hardening commit pushed: request timeouts, test separation, CLI args, cache safety, export tests, and coverage gate.
 - Agent memory setup is in place.
-- Current objective: v1.0.1 committed and tagged locally; remote publishing requires explicit approval.
+- Current objective: v1.0.1 GitHub release published; PyPI publishing is blocked until `PYPI_PASSWORD` is configured.
 
 ## Active Task: Agent Memory Setup
 
@@ -298,9 +298,12 @@ Finding 5 Verification:
 Release Steward Notes:
 
 - Final local diff reviewed before commit.
-- Local commit prepared for `v1.0.1`.
-- Local annotated tag `v1.0.1` prepared.
-- Do not push branch or tag, create GitHub releases, or publish to PyPI without explicit approval in the current turn.
+- Commit `c7bd368` pushed to `master`.
+- Annotated tag `v1.0.1` pushed.
+- GitHub Release `v1.0.1` published: https://github.com/sacrificeking/steam-review-exporter/releases/tag/v1.0.1
+- Master CI passed after publishing.
+- PyPI publish workflow built and validated the package but failed at upload with `403 Forbidden` because PyPI credentials were missing.
+- Repository secret `PYPI_USERNAME` is now configured as `__token__`; `PYPI_PASSWORD` still needs a scoped PyPI API token before the failed release workflow can be rerun.
 
 ## Backlog
 
