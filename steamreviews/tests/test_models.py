@@ -1,5 +1,6 @@
-from steamreviews.models import ReviewExportConfig
 import pytest
+
+from steamreviews.models import ReviewExportConfig
 
 
 def test_valid_config():

@@ -1,5 +1,6 @@
+from typing import Literal, Self
+
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional, Literal, Self, Any, Dict, List
 
 
 class ReviewExportConfig(BaseModel):
@@ -7,8 +8,8 @@ class ReviewExportConfig(BaseModel):
     language: str = Field(..., min_length=2, description="Language code or name")
     filter_type: Literal["all", "funny", "recent", "updated"] = "all"
     min_len: int = Field(0, ge=0, description="Minimum review length")
-    max_len: Optional[int] = Field(None, gt=0, description="Maximum review length")
-    output_dir: Optional[str] = Field(None, min_length=1, description="Directory for exported Excel files")
+    max_len: int | None = Field(None, gt=0, description="Maximum review length")
+    output_dir: str | None = Field(None, min_length=1, description="Directory for exported Excel files")
 
     @field_validator("language")
     @classmethod
@@ -61,6 +62,6 @@ class SteamQuerySummary(BaseModel):
 
 class SteamApiResponse(BaseModel):
     success: int
-    query_summary: Optional[SteamQuerySummary] = None
-    reviews: List[SteamReview] = []
+    query_summary: SteamQuerySummary | None = None
+    reviews: list[SteamReview] = []
     cursor: str = ""

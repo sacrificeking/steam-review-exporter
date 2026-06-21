@@ -2,21 +2,22 @@ import argparse
 import asyncio
 import logging
 import urllib.parse
-from typing import Tuple, Optional, Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 import httpx
 import pydantic
 
-from steamreviews.utils import setup_logging
 from steamreviews.export import fetch_reviews, process_reviews, save_to_excel
 from steamreviews.models import ReviewExportConfig
+from steamreviews.utils import setup_logging
 
 logger = logging.getLogger(__name__)
 
 FilterType = Literal["all", "funny", "recent", "updated"]
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parses command-line arguments."""
     parser = argparse.ArgumentParser(description="Download Steam reviews and export them to Excel.")
     parser.add_argument("--app-id", type=int, help="Steam AppID, e.g. 588650 for Dead Cells.")
@@ -53,7 +54,7 @@ def is_non_interactive_config(args: argparse.Namespace) -> bool:
     )
 
 
-def search_game_by_name(query: str) -> Optional[int]:
+def search_game_by_name(query: str) -> int | None:
     """
     Queries the Steam Store search API for a game name.
     If multiple matches are found, lists them and prompts the user to select one.
@@ -76,7 +77,7 @@ def search_game_by_name(query: str) -> Optional[int]:
             name = item.get("name", "Unknown")
             app_id = item.get("id")
             price_info = ""
-            if "price" in item and item["price"]:
+            if item.get("price"):
                 price_val = item["price"].get("final", 0) / 100
                 currency = item["price"].get("currency", "USD")
                 price_info = f" ({price_val:.2f} {currency})"
@@ -116,7 +117,7 @@ def get_app_id() -> int:
             return app_id
 
 
-def get_processing_params() -> Tuple[str, FilterType, int, Optional[int]]:
+def get_processing_params() -> tuple[str, FilterType, int, int | None]:
     """Queries processing parameters from the user."""
     language = input("Which language should the reviews be? (e.g. english or german):\n").strip().lower()
 
@@ -163,7 +164,7 @@ def get_game_name(app_id: int) -> str:
     return str(app_id)
 
 
-def get_optional_int_input(prompt: str, default_value: Optional[int] = None) -> Optional[int]:
+def get_optional_int_input(prompt: str, default_value: int | None = None) -> int | None:
     """Helper to get an optional integer input."""
     user_input = input(prompt).strip()
     if not user_input:
@@ -174,7 +175,7 @@ def get_optional_int_input(prompt: str, default_value: Optional[int] = None) -> 
     return default_value
 
 
-def get_validated_config(args: Optional[argparse.Namespace] = None) -> ReviewExportConfig:
+def get_validated_config(args: argparse.Namespace | None = None) -> ReviewExportConfig:
     """Queries user and returns a validated configuration object."""
     if args is not None and args.app_id is not None and args.language is not None:
         app_id = args.app_id
@@ -230,7 +231,7 @@ async def export_once(config: ReviewExportConfig) -> bool:
     )
 
 
-def get_next_config(config: ReviewExportConfig) -> Optional[ReviewExportConfig]:
+def get_next_config(config: ReviewExportConfig) -> ReviewExportConfig | None:
     """Prompts for the next interactive AppID while keeping the existing processing parameters."""
     again = input("\nDo you want to download another game with the same parameters? (y/n): ").strip().lower()
     if again != "y":
@@ -280,7 +281,7 @@ async def run_cli(args: argparse.Namespace, non_interactive: bool) -> int:
         return 1
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     non_interactive = is_non_interactive_config(args)
     setup_logging(verbose=args.verbose)

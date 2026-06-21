@@ -1,17 +1,18 @@
-import re
 import logging
+import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any
 
 import polars as pl
-from langdetect import detect, LangDetectException
+from langdetect import LangDetectException, detect
 
 from steamreviews.scraper import SteamReviewScraper
 
 logger = logging.getLogger(__name__)
 
 EXCEL_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-Review = Dict[str, Any]
+Review = dict[str, Any]
 LanguageDetector = Callable[[str], str]
 
 STEAM_LANG_TO_ISO = {
@@ -45,7 +46,7 @@ def build_output_filename(
     language: str,
     filter_type: str = "all",
     min_len: int = 0,
-    max_len: Optional[int] = None,
+    max_len: int | None = None,
 ) -> str:
     safe_game_name = sanitize_filename_part(game_name)
 
@@ -60,7 +61,7 @@ def build_output_filename(
 
     return f"{safe_game_name} {lang_iso} - Reviews {' '.join(details)}.xlsx"
 
-def build_review_request_params(language: str, filter_type: str = "all") -> Dict[str, str]:
+def build_review_request_params(language: str, filter_type: str = "all") -> dict[str, str]:
     request_params = {"json": "1", "num_per_page": "100"}
     if language and language != "all":
         request_params["language"] = language
@@ -69,10 +70,10 @@ def build_review_request_params(language: str, filter_type: str = "all") -> Dict
     return request_params
 
 def filter_reviews_by_language(
-    reviews: List[Review],
+    reviews: list[Review],
     language: str,
-    detector: Optional[LanguageDetector] = None,
-) -> List[Review]:
+    detector: LanguageDetector | None = None,
+) -> list[Review]:
     if not language or language == "all":
         return reviews
 
@@ -108,7 +109,7 @@ def filter_reviews_by_language(
     logger.info(f"Content Filter: Removed {removed_count} reviews that did not match '{target_iso}'.")
     return content_filtered_reviews
 
-def filter_reviews_by_length(reviews: List[Review], min_len: int = 0, max_len: Optional[int] = None) -> List[Review]:
+def filter_reviews_by_length(reviews: list[Review], min_len: int = 0, max_len: int | None = None) -> list[Review]:
     if min_len <= 0 and max_len is None:
         return reviews
 
@@ -132,8 +133,8 @@ def filter_reviews_by_length(reviews: List[Review], min_len: int = 0, max_len: O
     return filtered_reviews
 
 async def fetch_reviews(
-    app_id: int, language: str, filter_type: str = "all", min_len: int = 0, max_len: Optional[int] = None, output_dir: Optional[str] = None
-) -> List[Review]:
+    app_id: int, language: str, filter_type: str = "all", min_len: int = 0, max_len: int | None = None, output_dir: str | None = None
+) -> list[Review]:
     scraper = SteamReviewScraper(data_dir=output_dir)
     request_params = build_review_request_params(language, filter_type)
     
@@ -142,11 +143,11 @@ async def fetch_reviews(
         logger.error("Fetch reviews encountered an error.")
         # We can still process what we have in cache
         
-    reviews = scraper.cache.load_all_reviews(app_id)
+    reviews = scraper.cache.load_run_reviews(scraper.run_id, app_id)
     reviews = filter_reviews_by_language(reviews, language)
     return filter_reviews_by_length(reviews, min_len, max_len)
 
-def process_reviews(reviews: List[Dict], app_id: int) -> pl.DataFrame:
+def process_reviews(reviews: list[dict], app_id: int) -> pl.DataFrame:
     processed_data = []
 
     for raw_review in reviews:
@@ -185,8 +186,8 @@ def save_to_excel(
     language: str,
     filter_type: str = "all",
     min_len: int = 0,
-    max_len: Optional[int] = None,
-    output_dir: Optional[Union[str, Path]] = None,
+    max_len: int | None = None,
+    output_dir: str | Path | None = None,
 ) -> bool:
     if df.is_empty():
         logger.warning("No valid review data available to save.")

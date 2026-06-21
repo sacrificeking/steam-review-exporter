@@ -1,5 +1,24 @@
 # Steam Review Exporter Release Notes
 
+## v2.0.1 (Hotfix & Remediation)
+
+This release addresses critical bugs, test failures, and architecture bottlenecks identified in the `v2.0.0` architectural overhaul. 
+
+### Critical Bug Fixes
+- **API Retry Loop & Hangs:** Fixed an issue where the CLI could hang indefinitely when encountering rate limits (HTTP 429/500+). Implemented a hard limit (`MAX_RETRIES = 5`) and exponential backoff.
+- **SQLite DB Locking (Windows):** Fixed a severe bug where the SQLite database connections were leaked and left open on Windows, preventing downstream tools and file-system cleanup from functioning. Added `with sqlite3.connect` and `conn.close()` in `finally` blocks for transactional integrity.
+
+### Architecture Improvements
+- **Run Isolation & Cache Context Mixing:** The SQLite Cache now acts as a true database. Generated a unique `run_id` for every scraper execution. `export.py` now queries reviews linked *only* to the current `run_id`, preventing exports from pulling in reviews downloaded during previous disjoint filter runs.
+- **SQLite Cursor Tracking:** Overhauled the cursor loop protection. Cursors are now tracked securely by a SHA256 hash of the `request_params` (`params_hash`). This allows the scraper to cache cursors for different filters simultaneously without erroneously aborting loops.
+
+### Testing & QA (Fast-Gates)
+- **100% Test Pass Rate:** Fixed all broken tests. Wrote new test files for `api.py`, `scraper.py`, `cache.py`, and `export.py`.
+- **Coverage Increased:** Test coverage successfully raised from 54% to **89.27%** (Target: 75%).
+- **Linting & Typing:** Brought the codebase back into full compliance with `ruff check` and `mypy` strict type-checking. All Pydantic model types correctly cast and validated.
+
+---
+
 ## 2.0.0
 
 Massive "State of the Art" architectural rewrite to maximize performance, reliability, and modern web-readiness.

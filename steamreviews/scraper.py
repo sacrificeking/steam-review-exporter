@@ -1,5 +1,7 @@
+import hashlib
 import logging
-from typing import Dict, Any, List, Optional
+import uuid
+
 from tqdm import tqdm
 
 from steamreviews.api import SteamAPIClient
@@ -10,11 +12,12 @@ logger = logging.getLogger(__name__)
 class SteamReviewScraper:
     """Orchestrates the pagination and downloading of Steam reviews."""
     
-    def __init__(self, data_dir: Optional[str] = None):
+    def __init__(self, data_dir: str | None = None):
         self.api = SteamAPIClient()
         self.cache = SQLiteCache(data_dir=data_dir if data_dir else "data")
+        self.run_id: str = ""
 
-    async def fetch_all_reviews(self, app_id: int, request_params: Dict[str, str]) -> bool:
+    async def fetch_all_reviews(self, app_id: int, request_params: dict[str, str]) -> bool:
         """
         Fetches all reviews for a given AppID, handling pagination and rate limits.
         Uses SQLite for incremental caching.
@@ -25,21 +28,28 @@ class SteamReviewScraper:
         offset = 0
         pbar = None
         
-        logger.info(f"Downloading reviews for AppID = {app_id}")
+        self.run_id = str(uuid.uuid4())
+        
+        # Create a stable hash of the request parameters
+        params_str = ",".join(f"{k}={v}" for k, v in sorted(request_params.items()))
+        params_hash = hashlib.sha256(params_str.encode()).hexdigest()
+        
+        logger.info(f"Downloading reviews for AppID = {app_id} (Run: {self.run_id[:8]})")
         
         while True:
             # Check for infinite loops
-            if cursor != "*" and self.cache.has_visited_cursor(app_id, cursor):
+            if cursor != "*" and self.cache.has_visited_cursor(app_id, params_hash, cursor):
                 logger.warning(f"Cursor {cursor} already visited. Stopping to prevent infinite loop.")
                 break
                 
-            self.cache.save_cursor(app_id, cursor)
+            self.cache.save_cursor(app_id, params_hash, cursor)
 
             response = await self.api.get_reviews(app_id, cursor, request_params)
             
             if response is None:
                 logger.error("Failed to download reviews batch.")
-                if pbar: pbar.close()
+                if pbar:
+                    pbar.close()
                 return False
 
             # First batch - initialize progress bar
@@ -56,7 +66,7 @@ class SteamReviewScraper:
             delta = len(reviews_list)
             
             if delta > 0:
-                self.cache.merge_reviews(app_id, reviews_list)
+                self.cache.merge_reviews(self.run_id, app_id, reviews_list)
                 offset += delta
                 if pbar:
                     pbar.update(delta)

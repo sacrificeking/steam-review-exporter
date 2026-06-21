@@ -1,10 +1,10 @@
 import importlib.metadata as metadata
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-import pytest
 import pydantic
+import pytest
 
-from export_reviews import get_validated_config, main, parse_args, run_cli, search_game_by_name, get_app_id
+from export_reviews import get_app_id, get_validated_config, main, parse_args, run_cli, search_game_by_name
 
 
 def get_console_script_entrypoint() -> metadata.EntryPoint:
@@ -187,7 +187,7 @@ def test_search_game_by_name_no_results(mock_client):
 
     result = search_game_by_name("NonExistentGame")
     assert result is None
-    mock_get.assert_called_once()
+    mock_client.return_value.__enter__.return_value.get.assert_called_once()
 
 
 @patch("export_reviews.httpx.Client")
