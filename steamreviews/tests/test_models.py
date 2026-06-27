@@ -43,6 +43,20 @@ def test_invalid_length_range():
         )
 
 
+def test_author_model_resilience():
+    from steamreviews.models import SteamReviewAuthor
+
+    # Only steamid is required, other fields should default
+    author = SteamReviewAuthor(steamid="76561197960287930")
+    assert author.steamid == "76561197960287930"
+    assert author.num_games_owned is None
+    assert author.num_reviews is None
+    assert author.playtime_forever == 0
+    assert author.playtime_last_two_weeks is None
+    assert author.playtime_at_review == 0
+    assert author.last_played is None
+
+
 if __name__ == "__main__":
     # fast manual check
     test_valid_config()

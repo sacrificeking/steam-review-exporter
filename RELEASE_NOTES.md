@@ -1,5 +1,27 @@
 # Steam Review Exporter Release Notes
 
+## v2.0.2 (KPMG Audit Remediation)
+
+Dieses Release behebt die Befunde aus dem KPMG-style Code-Audit und härtet die Stabilität der Datenbank, des Pydantic-Modells sowie der HTTP-Fehlerklassifizierung.
+
+### 🛠️ Fehlerbehebungen & System-Härtung
+
+- **HTTP-Fehlerklassifizierung (AUD-06):** Einführung der Exception `SteamNotFoundError`. Der Client unterscheidet nun zwischen einer echten Nicht-Existenz eines App-IDs (HTTP 404) und allgemeinen temporären Serverfehlern (5xx), anstatt alles als Dienst-Unerreichbarkeit zu behandeln.
+- **SQLite Concurrency & WAL-Modus (AUD-07):** SQLite wird nun standardmäßig im Write-Ahead-Logging-Modus (WAL) initialisiert (`PRAGMA journal_mode=WAL;`). Dies erhöht den parallelen Durchsatz bei Lese- und Schreibvorgängen drastisch und verringert das Risiko von `database is locked`-Fehlern in Multi-Thread-Szenarien.
+- **Pydantic-Modell Resilienz (AUD-08):** Härtung des `SteamReviewAuthor`-Modells durch Deklaration aller sekundären Metadaten-Attribute als optional (`int | None = None`). Dies verhindert Validierungsabstürze, falls Valve Felder im API-Payload unangekündigt entfernt oder ändert.
+- **Konfigurierbare Export-Schwellenwerte (AUD-10):** Die Limits `EXPORT_MEMORY_WARNING_ROWS` und `MAX_EXCEL_DATA_ROWS` können nun dynamisch über die Umgebungsvariablen `STEAM_EXPORT_WARN_ROWS` und `STEAM_EXPORT_MAX_ROWS` konfiguriert werden.
+- **Datenbank-Schema-Migration:** Automatische Migration veralteter SQLite-Tabellenstrukturen. Fehlt die Spalte `params_hash` in der Tabelle `cursors` (z. B. nach einem Upgrade von Version 1.x), wird die Tabelle automatisch zurückgesetzt und neu angelegt.
+
+### 📦 Abhängigkeiten & Tools
+
+- Alle internen lock-Abhängigkeiten in `uv.lock` wurden auf den allerneuesten Stand gehoben (u.a. `polars v1.42.0`, `ruff v0.15.20`, `mypy v2.1.0` und `rich v15.0.0`).
+- Behebung von neuen Linter-Warnungen, die durch das Upgrade von Ruff aufgedeckt wurden.
+
+### 🧪 Tests
+- Zusätzliche Unit-Tests für die HTTP-Fehlercodes (404/400), WAL-Modus-Aktivierung, optionale Pydantic-Felder, Umgebungsvariablen-Steuerung sowie die automatische DB-Schema-Migration. Die Testabdeckung beträgt nun **90.73%** bei 53 bestandenen Tests.
+
+---
+
 ## v2.0.1 (Architecture Remediation & Web-Readiness)
 
 Dieses Release behebt primär kritische konzeptionelle Fehler und Flaschenhälse, die in der Version `v2.0.0` aufgetreten sind. Die Änderungen stellen sicher, dass die Architektur nicht nur für das CLI fehlerfrei und robust läuft, sondern auch sauber in externe Web- und Edge-Technologien integriert werden kann.

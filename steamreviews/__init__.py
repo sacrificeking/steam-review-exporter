@@ -1,4 +1,11 @@
-from .api import SteamAPIClient, SteamAPIError, SteamRateLimitError, SteamUnavailableError, SteamValidationError
+from .api import (
+    SteamAPIClient,
+    SteamAPIError,
+    SteamNotFoundError,
+    SteamRateLimitError,
+    SteamUnavailableError,
+    SteamValidationError,
+)
 from .export import fetch_reviews, process_reviews, save_to_excel
 from .scraper import SteamCursorLoopError, SteamReviewScraper
 from .storage import MemoryStorage, NullStorage, ReviewStorageProtocol, SQLiteStorage
@@ -11,6 +18,7 @@ __all__ = [
     "SteamAPIClient",
     "SteamAPIError",
     "SteamCursorLoopError",
+    "SteamNotFoundError",
     "SteamRateLimitError",
     "SteamReviewScraper",
     "SteamUnavailableError",

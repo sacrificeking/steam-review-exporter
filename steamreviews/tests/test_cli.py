@@ -113,6 +113,22 @@ def test_main_returns_failure_when_export_raises(monkeypatch):
     assert main(["--app-id", "588650", "--language", "english"]) == 1
 
 
+def test_main_returns_failure_when_processing_rejects_export(monkeypatch):
+    monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
+
+    async def mock_fetch(*args, **kwargs):
+        return [{"review": "Nice"}]
+
+    def raise_processing_error(*args, **kwargs):
+        raise ValueError("Excel export supports at most 1 row")
+
+    monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
+    monkeypatch.setattr("export_reviews.process_reviews", raise_processing_error)
+    monkeypatch.setattr("export_reviews.save_to_excel", lambda *args, **kwargs: pytest.fail("Unexpected export"))
+
+    assert main(["--app-id", "588650", "--language", "english"]) == 1
+
+
 def test_main_returns_failure_when_export_is_not_written(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
 
@@ -240,3 +256,23 @@ def test_get_app_id_triggers_search_and_loops_if_cancelled(monkeypatch):
         mock_search.return_value = None
         assert get_app_id() == 588650
         mock_search.assert_called_once_with("Dead Cells")
+
+
+def test_setup_logging_fallback(monkeypatch):
+    import logging
+
+    import steamreviews.utils as utils
+
+    monkeypatch.setattr(utils, "RichHandler", None)
+
+    # We clear the existing handlers on the root logger temporarily to test basicConfig handler addition
+    root = logging.getLogger()
+    old_handlers = list(root.handlers)
+    root.handlers = []
+
+    try:
+        utils.setup_logging(verbose=True)
+        assert any(type(h) is logging.StreamHandler for h in root.handlers)
+    finally:
+        # Restore old handlers
+        root.handlers = old_handlers

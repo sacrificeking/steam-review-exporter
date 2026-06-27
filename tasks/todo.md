@@ -305,7 +305,84 @@ Release Steward Notes:
 - PyPI publish workflow built and validated the package but failed at upload with `403 Forbidden` because PyPI credentials were missing.
 - Repository secret `PYPI_USERNAME` is now configured as `__token__`; `PYPI_PASSWORD` still needs a scoped PyPI API token before the failed release workflow can be rerun.
 
+## Active Task: Audit Iteration 2 Architecture Fixes
+
+Status: completed
+
+Goal:
+
+Fix the urgent audit findings around HTTP connection pooling, SQLite generator resource lifetime, delayed filter logging, and honest export memory behavior while preserving CLI/library compatibility.
+
+Steps:
+
+1. Reuse one `httpx.AsyncClient` across scraper API requests through an async `SteamAPIClient` lifecycle. Completed.
+2. Remove SQLite connection ownership from lazy review generators. Completed.
+3. Move user-facing filter initialization logs out of delayed iterator execution. Completed.
+4. Add explicit Excel row/RAM guardrails for very large exports. Completed.
+5. Add focused regression tests for the fixed architecture risks. Completed.
+6. Run fast verification and review the final diff. Completed.
+
+Verification gates:
+
+```bash
+python -m ruff check .
+python -m ruff format --check .
+python -m mypy .
+python -m pytest -m "not integration" --cov=steamreviews --cov-fail-under=75
+```
+
+Verification:
+
+- Targeted audit tests passed: 38 passed.
+- `ruff check .` passed.
+- `ruff format --check .` passed with escalated execution after the sandbox hit a Windows ACL error.
+- `mypy .` passed.
+- `pytest -m "not integration" --cov=steamreviews --cov-fail-under=75` passed: 47 passed, total coverage 90.29%.
+- `git diff --check` passed with only line-ending normalization warnings.
+
+## Active Task: KPMG-Style Audit Implementation (v2.0.1 Hardening)
+
+Status: completed
+
+Goal:
+
+Ensure repository release-readiness through thread-safety hardening, CI/CD validation updates, logging fallbacks, async loop safety, and clean diagnostics.
+
+Steps:
+
+1. Add thread-safety lock for `langdetect` in `steamreviews/export.py`. Completed.
+2. Update `.github/workflows/python-package.yml` to install CLI extras in CI. Completed.
+3. Handle missing `rich` gracefully in `steamreviews/utils.py`. Completed.
+4. Run blocking sync `get_game_name` in a worker thread in `export_reviews.py`. Completed.
+5. Provide explicit `ImportError` installation recommendations in `steamreviews/export.py`. Completed.
+6. Verify and reformat code to pass all ruff, mypy, and pytest gates. Completed.
+
+Verification:
+- Ruff check and format pass.
+- Mypy check passes.
+- Pytest suite passes: 48 passed, coverage 89.97%.
+
+## Active Task: KPMG Audit Findings Remediation (AUD-06 to AUD-10)
+
+Status: completed
+
+Goal:
+Address the findings (AUD-06, AUD-07, AUD-08, AUD-09, and AUD-10) from the KPMG-style code audit.
+
+Steps:
+1. Define and export `SteamNotFoundError` to classify HTTP 404 responses differently from general 5xx unavailability. (Completed)
+2. Enable WAL (Write-Ahead Logging) mode on database initialization to reduce concurrent locking risks. (Completed)
+3. Harden Pydantic schema validation for `SteamReviewAuthor` to make secondary attributes optional and prevent crashes on missing API fields. (Completed)
+4. Parameterize memory warning thresholds and maximum Excel export row limits with environment variables. (Completed)
+5. Add unit tests for HTTP error handling, SQLite WAL status, schema resilience, and dynamic limits parameterization. (Completed)
+
+Verification:
+- Ruff check and format pass.
+- Mypy check passes.
+- Pytest suite passes: 52 passed, coverage 90.50%.
+
 ## Backlog
 
 - Add more typed models for Steam API responses.
 - Consider optional release automation documentation.
+

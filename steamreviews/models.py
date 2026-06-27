@@ -28,12 +28,12 @@ class ReviewExportConfig(BaseModel):
 
 class SteamReviewAuthor(BaseModel):
     steamid: str
-    num_games_owned: int = 0
-    num_reviews: int = 0
+    num_games_owned: int | None = None
+    num_reviews: int | None = None
     playtime_forever: int = 0
-    playtime_last_two_weeks: int = 0
+    playtime_last_two_weeks: int | None = None
     playtime_at_review: int = 0
-    last_played: int = 0
+    last_played: int | None = None
 
 
 class SteamReview(BaseModel):

@@ -1,6 +1,7 @@
 import json
 import logging
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -23,7 +24,7 @@ class ReviewStorageProtocol(Protocol):
 
     def load_query_summary(self, app_id: int) -> dict[str, Any] | None: ...
 
-    def load_run_reviews(self, run_id: str, app_id: int) -> list[dict[str, Any]]: ...
+    def load_run_reviews(self, run_id: str, app_id: int) -> Iterable[dict[str, Any]]: ...
 
     def get_review_count(self, app_id: int) -> int: ...
 
@@ -31,7 +32,7 @@ class ReviewStorageProtocol(Protocol):
 class SQLiteStorage:
     """
     SQLite-based local cache for Steam reviews.
-    Used primarily for the CLI tool to allow resuming and large exports without memory limits.
+    Used primarily for the CLI tool to allow resumable downloads without repeated network work.
     """
 
     def __init__(self, data_dir: Path | str = "data"):
@@ -45,6 +46,15 @@ class SQLiteStorage:
         try:
             with conn:
                 cursor = conn.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL;")
+
+                # Migrate cursors table if params_hash column is missing from older schema versions
+                cursor.execute("PRAGMA table_info(cursors);")
+                columns = [row[1] for row in cursor.fetchall()]
+                if columns and "params_hash" not in columns:
+                    logger.info("Upgrading SQLite database: recreating cursors table with params_hash support.")
+                    cursor.execute("DROP TABLE IF EXISTS cursors;")
+
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS reviews (
                         app_id INTEGER,
@@ -187,10 +197,10 @@ class SQLiteStorage:
                 FROM reviews r
                 JOIN run_reviews rr ON r.app_id = rr.app_id AND r.recommendationid = rr.recommendationid
                 WHERE rr.run_id = ? AND r.app_id = ?
-            """,
+                """,
                 (run_id, app_id),
             )
-            return [json.loads(row[0]) for row in cursor.fetchall()]
+            return [json.loads(row[0]) for row in cursor]
         finally:
             conn.close()
 
@@ -232,8 +242,8 @@ class MemoryStorage:
     def load_query_summary(self, app_id: int) -> dict[str, Any] | None:
         return self.query_summaries.get(app_id)
 
-    def load_run_reviews(self, run_id: str, app_id: int) -> list[dict[str, Any]]:
-        return self.reviews
+    def load_run_reviews(self, run_id: str, app_id: int) -> Iterable[dict[str, Any]]:
+        yield from self.reviews
 
     def get_review_count(self, app_id: int) -> int:
         return len(self.reviews)
@@ -265,8 +275,8 @@ class NullStorage:
     def load_query_summary(self, app_id: int) -> dict[str, Any] | None:
         return self.query_summaries.get(app_id)
 
-    def load_run_reviews(self, run_id: str, app_id: int) -> list[dict[str, Any]]:
-        return []
+    def load_run_reviews(self, run_id: str, app_id: int) -> Iterable[dict[str, Any]]:
+        yield from []
 
     def get_review_count(self, app_id: int) -> int:
         return 0

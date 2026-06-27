@@ -47,49 +47,49 @@ class SteamReviewScraper:
 
         logger.info(f"Downloading reviews for AppID = {app_id} (Run: {self.run_id[:8]})")
 
-        while True:
-            # Check for infinite loops
-            if cursor != "*" and self.storage.has_visited_cursor(app_id, params_hash, cursor):
-                logger.error(f"Cursor {cursor} already visited. Stopping to prevent infinite loop.")
-                raise SteamCursorLoopError(f"Infinite loop detected at cursor {cursor}")
+        try:
+            async with self.api:
+                while True:
+                    # Check for infinite loops
+                    if cursor != "*" and self.storage.has_visited_cursor(app_id, params_hash, cursor):
+                        logger.error(f"Cursor {cursor} already visited. Stopping to prevent infinite loop.")
+                        raise SteamCursorLoopError(f"Infinite loop detected at cursor {cursor}")
 
-            self.storage.save_cursor(app_id, params_hash, cursor)
+                    self.storage.save_cursor(app_id, params_hash, cursor)
 
-            try:
-                response = await self.api.get_reviews(app_id, cursor, request_params)
-            except SteamAPIError as e:
-                logger.error(f"API Error during fetch: {e}")
-                if pbar:
-                    pbar.close()
-                return False
+                    try:
+                        response = await self.api.get_reviews(app_id, cursor, request_params)
+                    except SteamAPIError as e:
+                        logger.error(f"API Error during fetch: {e}")
+                        return False
 
-            # First batch - initialize progress bar
-            if num_reviews_expected is None and response.query_summary:
-                self.storage.save_query_summary(app_id, response.query_summary.model_dump())
-                num_reviews_expected = response.query_summary.total_reviews
+                    # First batch - initialize progress bar
+                    if num_reviews_expected is None and response.query_summary:
+                        self.storage.save_query_summary(app_id, response.query_summary.model_dump())
+                        num_reviews_expected = response.query_summary.total_reviews
 
-                # If total_reviews is unreliable (e.g. strict filters), we could do a secondary wide query here
-                # but for simplicity and performance, we'll trust the API for now, or just track downloaded count.
-                if num_reviews_expected > 0:
-                    pbar = tqdm(total=num_reviews_expected, desc=f"AppID {app_id}", unit="reviews")
+                        # If total_reviews is unreliable, a secondary wide query could refine it.
+                        # For now, trust the API or just track downloaded count.
+                        if num_reviews_expected > 0:
+                            pbar = tqdm(total=num_reviews_expected, desc=f"AppID {app_id}", unit="reviews")
 
-            reviews_list = [r.model_dump() for r in response.reviews]
-            delta = len(reviews_list)
+                    reviews_list = [r.model_dump() for r in response.reviews]
+                    delta = len(reviews_list)
 
-            if delta > 0:
-                self.storage.merge_reviews(self.run_id, app_id, reviews_list)
-                offset += delta
-                if pbar:
-                    pbar.update(delta)
+                    if delta > 0:
+                        self.storage.merge_reviews(self.run_id, app_id, reviews_list)
+                        offset += delta
+                        if pbar:
+                            pbar.update(delta)
 
-            # Stop condition
-            if delta == 0 or response.cursor == cursor:
-                break
+                    # Stop condition
+                    if delta == 0 or response.cursor == cursor:
+                        break
 
-            cursor = response.cursor
-
-        if pbar:
-            pbar.close()
+                    cursor = response.cursor
+        finally:
+            if pbar:
+                pbar.close()
 
         final_count = self.storage.get_review_count(app_id)
         logger.info(f"[appID = {app_id}] Total downloaded in cache: {final_count}")
@@ -108,25 +108,26 @@ class SteamReviewScraper:
 
         logger.info(f"Streaming reviews for AppID = {app_id} (Run: {self.run_id[:8]})")
 
-        while True:
-            if cursor != "*" and self.storage.has_visited_cursor(app_id, params_hash, cursor):
-                logger.error(f"Cursor {cursor} already visited. Breaking stream due to loop.")
-                raise SteamCursorLoopError(f"Infinite loop detected at cursor {cursor}")
+        async with self.api:
+            while True:
+                if cursor != "*" and self.storage.has_visited_cursor(app_id, params_hash, cursor):
+                    logger.error(f"Cursor {cursor} already visited. Breaking stream due to loop.")
+                    raise SteamCursorLoopError(f"Infinite loop detected at cursor {cursor}")
 
-            self.storage.save_cursor(app_id, params_hash, cursor)
+                self.storage.save_cursor(app_id, params_hash, cursor)
 
-            # We don't catch exceptions here. They bubble up to the consumer (e.g. Edge Function)
-            response = await self.api.get_reviews(app_id, cursor, request_params)
+                # We don't catch exceptions here. They bubble up to the consumer (e.g. Edge Function)
+                response = await self.api.get_reviews(app_id, cursor, request_params)
 
-            if response.query_summary:
-                self.storage.save_query_summary(app_id, response.query_summary.model_dump())
+                if response.query_summary:
+                    self.storage.save_query_summary(app_id, response.query_summary.model_dump())
 
-            reviews_list = [r.model_dump() for r in response.reviews]
-            if reviews_list:
-                self.storage.merge_reviews(self.run_id, app_id, reviews_list)
-                yield reviews_list
+                reviews_list = [r.model_dump() for r in response.reviews]
+                if reviews_list:
+                    self.storage.merge_reviews(self.run_id, app_id, reviews_list)
+                    yield reviews_list
 
-            if len(reviews_list) == 0 or response.cursor == cursor:
-                break
+                if len(reviews_list) == 0 or response.cursor == cursor:
+                    break
 
-            cursor = response.cursor
+                cursor = response.cursor

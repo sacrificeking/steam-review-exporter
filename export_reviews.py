@@ -205,7 +205,7 @@ def get_validated_config(args: argparse.Namespace | None = None) -> ReviewExport
 
 
 async def export_once(config: ReviewExportConfig) -> bool:
-    game_name = get_game_name(config.app_id)
+    game_name = await asyncio.to_thread(get_game_name, config.app_id)
 
     logger.info(f"Starting review export for App ID {config.app_id} ({game_name})...")
 
@@ -220,8 +220,12 @@ async def export_once(config: ReviewExportConfig) -> bool:
         logger.info("Check if the game has reviews in the selected language.")
         return False
 
-    logger.info(f"Downloaded {len(reviews)} reviews. Processing data...")
-    df = process_reviews(reviews, config.app_id)
+    logger.info("Downloaded reviews. Processing data...")
+    try:
+        df = await asyncio.to_thread(process_reviews, reviews, config.app_id)
+    except ValueError as e:
+        logger.error(str(e))
+        return False
     return save_to_excel(
         df,
         config.app_id,
