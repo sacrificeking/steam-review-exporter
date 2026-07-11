@@ -43,6 +43,8 @@ Use tags in the form `vMAJOR.MINOR.PATCH`.
 3. Verify release URL.
 4. Verify CI status.
 
+This project publishes through **GitHub Releases only**. There is no PyPI publish workflow.
+
 ## Safety Rules
 
 - Do not publish secrets or local artifacts.

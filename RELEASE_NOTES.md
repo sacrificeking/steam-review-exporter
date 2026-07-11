@@ -158,7 +158,6 @@ The 1.0.1 release candidate was checked with:
 
 - Integration tests still call the live Steam API and should be run separately.
 - Steam API requests remain network-dependent and may be affected by rate limits or temporary Steam service issues.
-- PyPI publishing still uses the conservative Twine credentials path with `PYPI_USERNAME` and `PYPI_PASSWORD` secrets.
 
 ## 1.0.0
 
