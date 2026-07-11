@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.11"]
+        python-version: ["3.13", "3.12", "3.11"]
 
     steps:
     - uses: actions/checkout@v4
@@ -44,6 +44,10 @@ jobs:
     - name: Test with pytest
       run: |
         pytest -m "not integration" --cov=steamreviews --cov-report=xml --cov-fail-under=75
+    - name: Audit dependencies with pip-audit
+      run: |
+        pip install pip-audit
+        pip-audit
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:

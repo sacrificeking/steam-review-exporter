@@ -43,6 +43,24 @@ def test_invalid_length_range():
         )
 
 
+def test_recommendationid_coerces_int_to_str():
+    from steamreviews.models import SteamReview, SteamReviewAuthor
+
+    author = SteamReviewAuthor(steamid="76561197960287930")
+    review = SteamReview(
+        recommendationid=12345,
+        author=author,
+        language="english",
+        review="Great game",
+        timestamp_created=1,
+        timestamp_updated=1,
+        voted_up=True,
+        votes_up=1,
+        votes_funny=0,
+    )
+    assert review.recommendationid == "12345"
+
+
 def test_author_model_resilience():
     from steamreviews.models import SteamReviewAuthor
 

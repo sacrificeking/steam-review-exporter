@@ -16,6 +16,7 @@ async def test_scraper_fetch_all():
 
     with patch("steamreviews.api.SteamAPIClient.get_reviews", new_callable=AsyncMock) as mock_get:
         mock_resp = MagicMock()
+        mock_resp.success = 1
         mock_resp.query_summary.model_dump.return_value = {"total_reviews": 1}
         mock_resp.query_summary.total_reviews = 1
         mock_review = MagicMock()
@@ -24,12 +25,14 @@ async def test_scraper_fetch_all():
         mock_resp.cursor = "next"
 
         mock_resp2 = MagicMock()
+        mock_resp2.success = 1
         mock_resp2.reviews = []
         mock_get.side_effect = [mock_resp, mock_resp2]
 
-        success = await scraper.fetch_all_reviews(123, {"language": "english"})
+        outcome = await scraper.fetch_all_reviews(123, {"language": "english"})
 
-        assert success is True
+        assert outcome.complete is True
+        assert outcome.downloaded_count == 1
         assert scraper.storage.get_review_count(123) == 1
     shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -39,6 +42,7 @@ async def test_fetch_reviews_stream_yields_batches():
     scraper = SteamReviewScraper(storage=NullStorage())
     with patch("steamreviews.api.SteamAPIClient.get_reviews", new_callable=AsyncMock) as mock_get:
         mock_resp1 = MagicMock()
+        mock_resp1.success = 1
         mock_resp1.query_summary.model_dump.return_value = {"total_reviews": 2}
         mock_resp1.query_summary.total_reviews = 2
 
@@ -51,6 +55,7 @@ async def test_fetch_reviews_stream_yields_batches():
         mock_resp1.cursor = "cursor2"
 
         mock_resp2 = MagicMock()
+        mock_resp2.success = 1
         mock_resp2.reviews = []
         mock_resp2.cursor = "cursor2"
 
@@ -70,16 +75,19 @@ async def test_fetch_reviews_stream_loop_protection():
     scraper = SteamReviewScraper(storage=MemoryStorage())
     with patch("steamreviews.api.SteamAPIClient.get_reviews", new_callable=AsyncMock) as mock_get:
         mock_resp1 = MagicMock()
+        mock_resp1.success = 1
         mock_resp1.query_summary.model_dump.return_value = {"total_reviews": 100}
         mock_resp1.reviews = [MagicMock()]
         mock_resp1.cursor = "cursorA"
 
         mock_resp2 = MagicMock()
+        mock_resp2.success = 1
         mock_resp2.query_summary.model_dump.return_value = {"total_reviews": 100}
         mock_resp2.reviews = [MagicMock()]
         mock_resp2.cursor = "cursorB"
 
         mock_resp3 = MagicMock()
+        mock_resp3.success = 1
         mock_resp3.query_summary.model_dump.return_value = {"total_reviews": 100}
         mock_resp3.reviews = [MagicMock()]
         mock_resp3.cursor = "cursorA"  # Loop!
@@ -89,6 +97,58 @@ async def test_fetch_reviews_stream_loop_protection():
         with pytest.raises(SteamCursorLoopError):
             async for _ in scraper.fetch_reviews_stream(123, {}):
                 pass
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_reviews_returns_false_on_success_zero():
+    scraper = SteamReviewScraper(storage=MemoryStorage())
+    with patch("steamreviews.api.SteamAPIClient.get_reviews", new_callable=AsyncMock) as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.success = 0
+        mock_resp.query_summary = None
+        mock_resp.reviews = []
+        mock_resp.cursor = "*"
+        mock_get.return_value = mock_resp
+
+        outcome = await scraper.fetch_all_reviews(123, {"language": "english"})
+
+    assert outcome.complete is False
+    assert outcome.partial is False
+    assert outcome.downloaded_count == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_reviews_returns_false_on_cursor_loop():
+    scraper = SteamReviewScraper(storage=MemoryStorage())
+    with patch("steamreviews.api.SteamAPIClient.get_reviews", new_callable=AsyncMock) as mock_get:
+        mock_resp1 = MagicMock()
+        mock_resp1.success = 1
+        mock_resp1.query_summary.model_dump.return_value = {"total_reviews": 100}
+        mock_resp1.query_summary.total_reviews = 100
+        mock_review = MagicMock()
+        mock_review.model_dump.return_value = {"recommendationid": "1", "review": "nice"}
+        mock_resp1.reviews = [mock_review]
+        mock_resp1.cursor = "cursorA"
+
+        mock_resp2 = MagicMock()
+        mock_resp2.success = 1
+        mock_resp2.query_summary = None
+        mock_resp2.reviews = [mock_review]
+        mock_resp2.cursor = "cursorB"
+
+        mock_resp3 = MagicMock()
+        mock_resp3.success = 1
+        mock_resp3.query_summary = None
+        mock_resp3.reviews = [mock_review]
+        mock_resp3.cursor = "cursorA"
+
+        mock_get.side_effect = [mock_resp1, mock_resp2, mock_resp3]
+
+        outcome = await scraper.fetch_all_reviews(123, {"language": "english"})
+
+    assert outcome.complete is False
+    assert outcome.partial is True
+    assert outcome.downloaded_count == 3
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,31 @@ from unittest.mock import MagicMock, patch
 import pydantic
 import pytest
 
-from export_reviews import get_app_id, get_validated_config, main, parse_args, run_cli, search_game_by_name
+from export_reviews import (
+    EXIT_PARTIAL_EXPORT,
+    get_app_id,
+    get_validated_config,
+    main,
+    parse_args,
+    run_cli,
+    search_game_by_name,
+)
+from steamreviews.results import FetchOutcome, FetchReviewsResult
+
+
+def _fetch_result(
+    reviews: list[dict], *, complete: bool = True, downloaded_count: int | None = None
+) -> FetchReviewsResult:
+    count = downloaded_count if downloaded_count is not None else len(reviews)
+    return FetchReviewsResult(
+        reviews=reviews,
+        outcome=FetchOutcome(
+            complete=complete,
+            downloaded_count=count,
+            expected_total=1000 if not complete else None,
+            failure_reason=None if complete else "API error during fetch: timeout",
+        ),
+    )
 
 
 def get_console_script_entrypoint() -> metadata.EntryPoint:
@@ -41,6 +65,38 @@ def test_parse_args_accepts_non_interactive_config():
     assert args.output_dir == "exports"
 
 
+def test_parse_args_accepts_cache_dir():
+    args = parse_args(
+        ["--app-id", "588650", "--language", "english", "--cache-dir", "cache", "--output-dir", "exports"]
+    )
+
+    assert args.cache_dir == "cache"
+    assert args.output_dir == "exports"
+
+
+def test_get_validated_config_stores_cache_and_output_dirs():
+    args = parse_args(
+        ["--app-id", "588650", "--language", "english", "--cache-dir", "cache", "--output-dir", "exports"]
+    )
+    config = get_validated_config(args)
+
+    assert config.cache_dir == "cache"
+    assert config.output_dir == "exports"
+
+
+def test_main_returns_partial_exit_code_for_incomplete_download(monkeypatch):
+    monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
+
+    async def mock_fetch(*args, **kwargs):
+        return _fetch_result([{"review": "Nice"}], complete=False, downloaded_count=50)
+
+    monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
+    monkeypatch.setattr("export_reviews.process_reviews", lambda reviews, app_id: object())
+    monkeypatch.setattr("export_reviews.save_to_excel", lambda *args, **kwargs: True)
+
+    assert main(["--app-id", "588650", "--language", "english"]) == EXIT_PARTIAL_EXPORT
+
+
 def test_parse_args_requires_app_id_and_language_for_cli_config():
     with pytest.raises(SystemExit):
         parse_args(["--app-id", "588650"])
@@ -61,7 +117,7 @@ def test_main_returns_success_and_does_not_prompt_again_in_non_interactive_mode(
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
 
     async def mock_fetch(*args, **kwargs):
-        return [{"review": "Nice"}]
+        return _fetch_result([{"review": "Nice"}])
 
     monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
 
@@ -76,7 +132,7 @@ def test_main_returns_failure_when_no_reviews_are_found(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
 
     async def mock_fetch(*args, **kwargs):
-        return []
+        return _fetch_result([])
 
     monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
     monkeypatch.setattr("export_reviews.process_reviews", lambda *args, **kwargs: pytest.fail("Unexpected processing"))
@@ -100,7 +156,7 @@ def test_main_returns_failure_when_export_raises(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
 
     async def mock_fetch(*args, **kwargs):
-        return [{"review": "Nice"}]
+        return _fetch_result([{"review": "Nice"}])
 
     monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
     monkeypatch.setattr("export_reviews.process_reviews", lambda *args, **kwargs: object())
@@ -117,7 +173,7 @@ def test_main_returns_failure_when_processing_rejects_export(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
 
     async def mock_fetch(*args, **kwargs):
-        return [{"review": "Nice"}]
+        return _fetch_result([{"review": "Nice"}])
 
     def raise_processing_error(*args, **kwargs):
         raise ValueError("Excel export supports at most 1 row")
@@ -133,7 +189,7 @@ def test_main_returns_failure_when_export_is_not_written(monkeypatch):
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
 
     async def mock_fetch(*args, **kwargs):
-        return [{"review": "Nice"}]
+        return _fetch_result([{"review": "Nice"}])
 
     monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
     monkeypatch.setattr("export_reviews.process_reviews", lambda *args, **kwargs: object())
@@ -178,7 +234,7 @@ def test_installed_console_script_wrapper_converts_success_return_code(monkeypat
     monkeypatch.setattr("export_reviews.get_game_name", lambda app_id: "Dead Cells")
 
     async def mock_fetch(*args, **kwargs):
-        return [{"review": "Nice"}]
+        return _fetch_result([{"review": "Nice"}])
 
     monkeypatch.setattr("export_reviews.fetch_reviews", mock_fetch)
 

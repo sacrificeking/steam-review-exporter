@@ -19,6 +19,7 @@ idlist.txt
 idprocessed.txt
 idprocessed*.txt
 data/
+test_exports/
 
 # Environments
 .venv/

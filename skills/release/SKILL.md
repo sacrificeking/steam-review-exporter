@@ -7,9 +7,14 @@ Use this skill for commits, tags, GitHub releases, release notes, or publishing.
 1. Run `git status -sb`.
 2. Confirm the intended scope.
 3. Select the next version using Semantic Versioning.
-4. Create release notes for that exact version.
+4. Create release notes for that exact version in **English**.
 5. Run fast verification.
 6. Ensure release notes match the shipped behavior.
+
+## Language
+
+- Write `RELEASE_NOTES.md` and GitHub release descriptions in English.
+- Keep section headings and tone consistent with prior English release entries.
 
 ## Semantic Versioning
 

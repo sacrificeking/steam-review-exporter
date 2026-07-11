@@ -16,13 +16,16 @@ graph TD
 
     subgraph "steamreviews"
         B --> C[models.py]
-        B --> D[download_reviews.py]
+        B --> D[api.py]
+        B --> S[scraper.py]
+        B --> ST[storage.py]
         B --> E[export.py]
         B --> F[utils.py]
     end
 
-    D -->|Requests| SteamAPI[Steam API]
-    D -->|Cache| Data[data folder]
+    D -->|Async HTTP| SteamAPI[Steam API]
+    S --> ST
+    ST -->|SQLite cache| Data[data folder]
     E -->|Write| ExcelFile[Excel file]
 ```
 
@@ -31,18 +34,21 @@ graph TD
 | File | Purpose |
 | :--- | :--- |
 | `export_reviews.py` | CLI entry point. Supports interactive prompts and command-line arguments. |
-| `steamreviews/models.py` | Pydantic validation for export configuration. |
-| `steamreviews/download_reviews.py` | Steam API requests, pagination, rate-limit handling, and JSON cache. |
+| `steamreviews/models.py` | Pydantic validation for export configuration and Steam API payloads. |
+| `steamreviews/api.py` | Async Steam API client with retries, rate limits, and typed errors. |
+| `steamreviews/scraper.py` | Pagination orchestration and cursor-loop protection. |
+| `steamreviews/storage.py` | SQLite, memory, and null storage backends. |
 | `steamreviews/export.py` | Review filtering, URL generation, Excel safety, and Excel export. |
+| `steamreviews/language_detection.py` | Steam language mapping and `lingua`-based review text detection. |
 | `steamreviews/utils.py` | Logging setup. |
 | `steamreviews/tests/` | Unit, export, CLI, and integration tests. |
 
 ## Setup
 
-Install the project with development dependencies:
+Install the project with development and CLI dependencies:
 
 ```bash
-python -m pip install -e .[dev]
+python -m pip install -e .[dev,cli]
 ```
 
 ## Fast Local Checks
@@ -80,5 +86,9 @@ steam-review-exporter
 Scriptable mode:
 
 ```bash
-steam-review-exporter --app-id 588650 --language english --filter recent --min-len 100 --output-dir exports
+steam-review-exporter --app-id 588650 --language english --filter recent --min-len 100 --cache-dir data --output-dir exports
 ```
+
+Partial downloads return exit code `3` when an Excel file was still written from cached reviews.
+
+CI tests the package on Python 3.11, 3.12, and 3.13. Dependency updates are managed via Renovate with grouped patch/minor PRs.

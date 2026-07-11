@@ -30,6 +30,16 @@ def test_cache_init(temp_cache):
         conn.close()
 
 
+def test_cache_merge_skips_reviews_without_recommendationid(temp_cache, caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        temp_cache.merge_reviews("run1", 123, [{"review": "missing id"}])
+
+    assert temp_cache.get_review_count(123) == 0
+    assert "Skipping review without recommendationid" in caplog.text
+
+
 def test_cache_merge_and_load(temp_cache):
     reviews = [{"recommendationid": "1", "review": "nice"}]
     temp_cache.merge_reviews("run1", 123, reviews)

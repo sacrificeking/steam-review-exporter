@@ -2,5 +2,44 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:base"
+  ],
+  "timezone": "Europe/Berlin",
+  "schedule": [
+    "before 6am on Monday"
+  ],
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "description": "Group development dependencies",
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "groupName": "dev dependencies"
+    },
+    {
+      "description": "Group CLI optional dependencies",
+      "matchDepTypes": [
+        "optionalDependencies"
+      ],
+      "groupName": "cli dependencies"
+    },
+    {
+      "description": "Automerge patch updates after CI passes",
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Group Python minor/patch updates",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "python dependencies"
+    }
   ]
 }

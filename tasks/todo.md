@@ -340,7 +340,7 @@ Verification:
 - `pytest -m "not integration" --cov=steamreviews --cov-fail-under=75` passed: 47 passed, total coverage 90.29%.
 - `git diff --check` passed with only line-ending normalization warnings.
 
-## Active Task: KPMG-Style Audit Implementation (v2.0.1 Hardening)
+## Active Task: Architecture Hardening (v2.0.1 Hardening)
 
 Status: completed
 
@@ -362,12 +362,12 @@ Verification:
 - Mypy check passes.
 - Pytest suite passes: 48 passed, coverage 89.97%.
 
-## Active Task: KPMG Audit Findings Remediation (AUD-06 to AUD-10)
+## Active Task: Database and Error Handling Remediation
 
 Status: completed
 
 Goal:
-Address the findings (AUD-06, AUD-07, AUD-08, AUD-09, and AUD-10) from the KPMG-style code audit.
+Address the architectural, database, validation, and error handling hardening points.
 
 Steps:
 1. Define and export `SteamNotFoundError` to classify HTTP 404 responses differently from general 5xx unavailability. (Completed)

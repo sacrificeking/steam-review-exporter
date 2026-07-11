@@ -1,6 +1,6 @@
 # Steam API Skill
 
-Use this skill when modifying `steamreviews/download_reviews.py` or behavior involving Steam API requests.
+Use this skill when modifying `steamreviews/api.py`, `steamreviews/scraper.py`, or behavior involving Steam API requests.
 
 ## Invariants
 
@@ -8,28 +8,32 @@ Use this skill when modifying `steamreviews/download_reviews.py` or behavior inv
 - Live Steam API behavior must not be required for fast tests.
 - Rate limits and temporary HTTP failures must be handled predictably.
 - Cache writes must avoid corrupting existing data.
-- Existing public functions should remain backward compatible unless explicitly approved.
+- API responses with `success != 1` must be treated as failures.
+- Reviews without `recommendationid` must be skipped, not crash storage.
 
 ## Request Handling Checklist
 
 1. Use HTTPS endpoints.
-2. Include a user agent.
-3. Set connect and read timeouts.
-4. Handle `requests.exceptions.RequestException`.
+2. Include a versioned user agent from package metadata.
+3. Set connect and read timeouts via `httpx.Timeout`.
+4. Handle `httpx.RequestError`.
 5. Handle invalid JSON.
-6. Treat 429, 500, 502, 503, and 504 as temporary failures.
-7. Keep retries bounded by configured rate limits.
+6. Validate payloads with Pydantic models.
+7. Treat 429, 500, 502, 503, and 504 as temporary failures.
+8. Keep retries bounded by configured rate limits.
+9. Reject `success != 1` responses before pagination continues.
 
-## Cache Checklist
+## Storage Checklist
 
 1. Use `Path`, not string concatenation, for file paths.
 2. Support custom `data_dir` for tests and callers.
-3. Use UTF-8 for JSON reads/writes.
-4. Write via temporary file and replace atomically.
-5. Treat invalid cached JSON as recoverable with logging.
+3. Use WAL mode for SQLite.
+4. Skip reviews missing `recommendationid` with a warning.
+5. Track cursors per request-parameter hash to prevent infinite loops.
 
 ## Test Strategy
 
-- Mock `requests.get` for timeout/header/error behavior.
-- Use `tmp_path` or temporary directories for cache tests.
+- Mock `httpx` transports for timeout/header/error behavior.
+- Use `tmp_path` or temporary directories for SQLite tests.
 - Keep live API tests marked as `integration`.
+- Use VCR cassettes for real response-shape validation.

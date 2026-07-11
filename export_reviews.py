@@ -10,11 +10,17 @@ import pydantic
 
 from steamreviews.export import fetch_reviews, process_reviews, save_to_excel
 from steamreviews.models import ReviewExportConfig
+from steamreviews.results import ExportOnceResult
 from steamreviews.utils import setup_logging
 
 logger = logging.getLogger(__name__)
 
 FilterType = Literal["all", "funny", "recent", "updated"]
+
+EXIT_SUCCESS = 0
+EXIT_FAILURE = 1
+EXIT_CONFIG_ERROR = 2
+EXIT_PARTIAL_EXPORT = 3
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -31,6 +37,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--min-len", type=int, default=0, help="Minimum review length in characters.")
     parser.add_argument("--max-len", type=int, help="Maximum review length in characters.")
+    parser.add_argument("--cache-dir", help="Directory for the SQLite review cache. Defaults to ./data.")
     parser.add_argument("--output-dir", help="Directory where the Excel file should be written.")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose debug logging.")
     args = parser.parse_args(argv)
@@ -49,6 +56,7 @@ def is_non_interactive_config(args: argparse.Namespace) -> bool:
             args.filter_type != "all",
             args.min_len != 0,
             args.max_len is not None,
+            args.cache_dir is not None,
             args.output_dir is not None,
         ]
     )
@@ -183,10 +191,12 @@ def get_validated_config(args: argparse.Namespace | None = None) -> ReviewExport
         filter_type = args.filter_type
         min_len = args.min_len
         max_len = args.max_len
+        cache_dir = args.cache_dir
         output_dir = args.output_dir
     else:
         app_id = get_app_id()
         language, filter_type, min_len, max_len = get_processing_params()
+        cache_dir = None
         output_dir = None
 
     try:
@@ -196,6 +206,7 @@ def get_validated_config(args: argparse.Namespace | None = None) -> ReviewExport
             filter_type=filter_type,
             min_len=min_len,
             max_len=max_len,
+            cache_dir=cache_dir,
             output_dir=output_dir,
         )
         return config
@@ -204,29 +215,49 @@ def get_validated_config(args: argparse.Namespace | None = None) -> ReviewExport
         raise
 
 
-async def export_once(config: ReviewExportConfig) -> bool:
+async def export_once(config: ReviewExportConfig) -> ExportOnceResult:
     game_name = await asyncio.to_thread(get_game_name, config.app_id)
 
     logger.info(f"Starting review export for App ID {config.app_id} ({game_name})...")
 
-    # We use SQLite storage for the CLI implementation
-    reviews = await fetch_reviews(
-        config.app_id, config.language, config.filter_type, config.min_len, config.max_len, config.output_dir
+    fetch_result = await fetch_reviews(
+        config.app_id,
+        config.language,
+        config.filter_type,
+        config.min_len,
+        config.max_len,
+        config.cache_dir,
     )
+    reviews = fetch_result.reviews
+    partial_download = fetch_result.outcome.partial
 
     if not reviews:
         logger.warning(f"No reviews found for '{game_name}' (AppID {config.app_id}).")
-        logger.info("Check if the AppID is correct.")
-        logger.info("Check if the game has reviews in the selected language.")
-        return False
+        if partial_download:
+            logger.warning("The download was interrupted before any reviews could be exported.")
+        else:
+            logger.info("Check if the AppID is correct.")
+            logger.info("Check if the game has reviews in the selected language.")
+        return ExportOnceResult(exported=False, partial=partial_download)
+
+    if partial_download:
+        expected = fetch_result.outcome.expected_total
+        expected_hint = f" of ~{expected} reported by Steam" if expected else ""
+        logger.warning(
+            "Exporting %d filtered review(s)%s from a partial download. Reason: %s",
+            len(reviews),
+            expected_hint,
+            fetch_result.outcome.failure_reason or "unknown",
+        )
 
     logger.info("Downloaded reviews. Processing data...")
     try:
         df = await asyncio.to_thread(process_reviews, reviews, config.app_id)
     except ValueError as e:
         logger.error(str(e))
-        return False
-    return save_to_excel(
+        return ExportOnceResult(exported=False, partial=False)
+
+    exported = save_to_excel(
         df,
         config.app_id,
         game_name,
@@ -236,6 +267,7 @@ async def export_once(config: ReviewExportConfig) -> bool:
         config.max_len,
         config.output_dir,
     )
+    return ExportOnceResult(exported=exported, partial=exported and partial_download)
 
 
 def get_next_config(config: ReviewExportConfig) -> ReviewExportConfig | None:
@@ -251,6 +283,7 @@ def get_next_config(config: ReviewExportConfig) -> ReviewExportConfig | None:
         filter_type=config.filter_type,
         min_len=config.min_len,
         max_len=config.max_len,
+        cache_dir=config.cache_dir,
         output_dir=config.output_dir,
     )
 
@@ -260,10 +293,12 @@ async def run_cli(args: argparse.Namespace, non_interactive: bool) -> int:
     try:
         config = get_validated_config(args)
         exported_any = False
+        partial_any = False
 
         while True:
             result = await export_once(config)
-            exported_any = result or exported_any
+            exported_any = result.exported or exported_any
+            partial_any = result.partial or partial_any
 
             if non_interactive:
                 break
@@ -273,19 +308,21 @@ async def run_cli(args: argparse.Namespace, non_interactive: bool) -> int:
                 break
             config = next_config
 
-        return 0 if exported_any else 1
+        if partial_any:
+            return EXIT_PARTIAL_EXPORT
+        return EXIT_SUCCESS if exported_any else EXIT_FAILURE
 
     except KeyboardInterrupt:
         logger.warning("\nOperation cancelled by user.")
         return 130
     except EOFError:
         logger.error("\nInput stream closed unexpectedly. Exiting.")
-        return 1
+        return EXIT_FAILURE
     except pydantic.ValidationError:
-        return 2
+        return EXIT_CONFIG_ERROR
     except Exception as e:
         logger.critical(f"\nAn unexpected error occurred: {e}")
-        return 1
+        return EXIT_FAILURE
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -75,6 +75,43 @@ async def test_get_reviews_unavailable_error():
             await client.get_reviews(123, "*", {})
 
 
+def test_package_user_agent_includes_version():
+    from steamreviews.api import _package_user_agent
+
+    assert _package_user_agent().startswith("steam-review-exporter/")
+
+
+@pytest.mark.asyncio
+async def test_api_client_sends_versioned_user_agent():
+    captured_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_headers.update(dict(request.headers))
+        return httpx.Response(200, json=_steam_response_payload())
+
+    transport = httpx.MockTransport(handler)
+
+    async with SteamAPIClient() as client:
+        client._client = httpx.AsyncClient(transport=transport, headers=client.headers)
+        client._owns_client = True
+        await client.get_reviews(123, "*", {})
+
+    assert captured_headers.get("user-agent", "").startswith("steam-review-exporter/")
+
+
+@pytest.mark.asyncio
+async def test_api_client_accepts_numeric_recommendationid():
+    payload = _steam_response_payload()
+    payload["reviews"][0]["recommendationid"] = 99999
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        client = SteamAPIClient(http_client=http_client)
+        response = await client.get_reviews(123, "*", {})
+
+    assert response.reviews[0].recommendationid == "99999"
+
+
 @pytest.mark.asyncio
 async def test_api_client_success():
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json=_steam_response_payload()))

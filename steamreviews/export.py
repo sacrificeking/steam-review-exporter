@@ -1,8 +1,7 @@
 import logging
 import os
 import re
-import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,34 +13,21 @@ except ImportError:
 if TYPE_CHECKING:
     import polars as _pl
 
-from langdetect import LangDetectException, detect
-
+from steamreviews.language_detection import (
+    STEAM_LANG_TO_ISO,
+    ReviewLanguageDetector,
+    detect_review_language,
+    iso_matches_target,
+)
+from steamreviews.results import FetchReviewsResult
 from steamreviews.scraper import SteamReviewScraper
 
 logger = logging.getLogger(__name__)
-
-_langdetect_lock = threading.Lock()
 
 EXCEL_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 MAX_EXCEL_DATA_ROWS = int(os.getenv("STEAM_EXPORT_MAX_ROWS", 1_048_575))
 EXPORT_MEMORY_WARNING_ROWS = int(os.getenv("STEAM_EXPORT_WARN_ROWS", 250_000))
 Review = dict[str, Any]
-LanguageDetector = Callable[[str], str]
-
-STEAM_LANG_TO_ISO = {
-    "english": "en",
-    "german": "de",
-    "french": "fr",
-    "spanish": "es",
-    "italian": "it",
-    "russian": "ru",
-    "schinese": "zh-cn",
-    "tchinese": "zh-tw",
-    "japanese": "ja",
-    "koreana": "ko",
-    "portuguese": "pt",
-    "brazilian": "pt",
-}
 
 
 def sanitize_filename_part(text: str) -> str:
@@ -51,8 +37,12 @@ def sanitize_filename_part(text: str) -> str:
 
 def sanitize_excel_text(text: str) -> str:
     """Prefixes potentially executable Excel cell text with an apostrophe to prevent CSV/Formula injection."""
-    stripped = text.lstrip()
-    if stripped.startswith(EXCEL_FORMULA_PREFIXES):
+    if not text:
+        return text
+    if text[0] in EXCEL_FORMULA_PREFIXES:
+        return "'" + text
+    stripped = text.lstrip(" \t\r\n")
+    if stripped and stripped[0] in ("=", "+", "-", "@"):
         return "'" + text
     return text
 
@@ -90,20 +80,20 @@ def build_review_request_params(language: str, filter_type: str = "all") -> dict
 def filter_reviews_by_language(
     reviews: Iterable[Review],
     language: str,
-    detector: LanguageDetector | None = None,
+    detector: ReviewLanguageDetector | None = None,
 ) -> Iterable[Review]:
     if not language or language == "all":
         return reviews
 
     target_lang = language.lower()
     target_iso = STEAM_LANG_TO_ISO.get(target_lang)
-    detector = detector or detect
-
     if target_iso is None:
         return _filter_reviews_by_steam_language(reviews, target_lang)
 
+    resolved_detector = detector or detect_review_language
+
     logger.info(f"Applying content analysis for language '{target_lang}' (ISO: {target_iso})...")
-    return _filter_reviews_by_detected_language(reviews, target_lang, target_iso, detector)
+    return _filter_reviews_by_detected_language(reviews, target_lang, target_iso, resolved_detector)
 
 
 def _filter_reviews_by_steam_language(reviews: Iterable[Review], target_lang: str) -> Iterable[Review]:
@@ -116,7 +106,7 @@ def _filter_reviews_by_detected_language(
     reviews: Iterable[Review],
     target_lang: str,
     target_iso: str,
-    detector: LanguageDetector,
+    detector: ReviewLanguageDetector,
 ) -> Iterable[Review]:
     removed_count = 0
 
@@ -132,20 +122,11 @@ def _filter_reviews_by_detected_language(
             yield review
             continue
 
-        try:
-            # langdetect.detect is not thread-safe, so serialize calls to default detector
-            if detector is detect:
-                with _langdetect_lock:
-                    detected_lang = detector(text)
-            else:
-                detected_lang = detector(text)
-
-            if detected_lang == target_iso:
-                yield review
-            else:
-                removed_count += 1
-        except LangDetectException:
+        detected_lang = detector(text)
+        if detected_lang is None or iso_matches_target(detected_lang, target_iso):
             yield review
+        else:
+            removed_count += 1
 
     logger.info(f"Content Filter: Removed {removed_count} reviews that did not match '{target_iso}'.")
 
@@ -189,22 +170,34 @@ async def fetch_reviews(
     filter_type: str = "all",
     min_len: int = 0,
     max_len: int | None = None,
-    output_dir: str | None = None,
-) -> Iterable[dict[str, Any]]:
+    cache_dir: str | None = None,
+) -> FetchReviewsResult:
     from steamreviews.storage import SQLiteStorage
 
-    storage = SQLiteStorage(data_dir=output_dir if output_dir else "data")
+    storage = SQLiteStorage(data_dir=cache_dir if cache_dir else "data")
     scraper = SteamReviewScraper(storage=storage)
     request_params = build_review_request_params(language, filter_type)
 
-    success = await scraper.fetch_all_reviews(app_id, request_params)
-    if not success:
-        logger.error("Fetch reviews encountered an error.")
-        # We can still process what we have in cache
+    outcome = await scraper.fetch_all_reviews(app_id, request_params)
+    if outcome.partial:
+        logger.warning(
+            "Partial download for app_id=%s: cached %d review(s)"
+            + (f" of ~{outcome.expected_total} reported by Steam" if outcome.expected_total else "")
+            + (f". Reason: {outcome.failure_reason}" if outcome.failure_reason else "."),
+            app_id,
+            outcome.downloaded_count,
+        )
+    elif not outcome.complete:
+        logger.error(
+            "Fetch reviews encountered an error for app_id=%s%s",
+            app_id,
+            f": {outcome.failure_reason}" if outcome.failure_reason else ".",
+        )
 
-    reviews = scraper.storage.load_run_reviews(scraper.run_id, app_id)
+    reviews = list(scraper.storage.load_run_reviews(scraper.run_id, app_id))
     reviews_filtered_lang = filter_reviews_by_language(reviews, language)
-    return filter_reviews_by_length(reviews_filtered_lang, min_len, max_len)
+    filtered_reviews = list(filter_reviews_by_length(reviews_filtered_lang, min_len, max_len))
+    return FetchReviewsResult(reviews=filtered_reviews, outcome=outcome)
 
 
 def _normalize_review_for_export(raw_review: dict[str, Any], app_id: int) -> Review:

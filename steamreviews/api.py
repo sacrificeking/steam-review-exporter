@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from importlib.metadata import PackageNotFoundError, version
 from typing import Self
 
 import httpx
@@ -8,6 +9,14 @@ from pydantic import ValidationError
 from steamreviews.models import SteamApiResponse
 
 logger = logging.getLogger(__name__)
+
+
+def _package_user_agent() -> str:
+    try:
+        pkg_version = version("steam-review-exporter")
+    except PackageNotFoundError:
+        pkg_version = "unknown"
+    return f"steam-review-exporter/{pkg_version}"
 
 
 class SteamAPIError(Exception):
@@ -54,7 +63,7 @@ class SteamAPIClient:
         raise_on_rate_limit: bool = False,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self.headers = {"User-Agent": "steam-review-exporter/1.1"}
+        self.headers = {"User-Agent": _package_user_agent()}
         self.timeout = httpx.Timeout(5.0, read=30.0)
         self._query_count = 0
         self.raise_on_rate_limit = raise_on_rate_limit

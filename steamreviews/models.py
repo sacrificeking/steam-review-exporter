@@ -9,6 +9,7 @@ class ReviewExportConfig(BaseModel):
     filter_type: Literal["all", "funny", "recent", "updated"] = "all"
     min_len: int = Field(0, ge=0, description="Minimum review length")
     max_len: int | None = Field(None, gt=0, description="Maximum review length")
+    cache_dir: str | None = Field(None, min_length=1, description="Directory for the SQLite review cache")
     output_dir: str | None = Field(None, min_length=1, description="Directory for exported Excel files")
 
     @field_validator("language")
@@ -53,6 +54,13 @@ class SteamReview(BaseModel):
     written_during_early_access: bool = False
     hidden_in_steam_china: bool = False
     steam_china_banned: bool = False
+
+    @field_validator("recommendationid", mode="before")
+    @classmethod
+    def coerce_recommendationid(cls, v: object) -> str:
+        if v is None:
+            raise ValueError("recommendationid is required")
+        return str(v)
 
 
 class SteamQuerySummary(BaseModel):

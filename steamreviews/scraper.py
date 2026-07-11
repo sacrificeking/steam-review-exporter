@@ -4,7 +4,8 @@ import uuid
 
 from tqdm import tqdm
 
-from steamreviews.api import SteamAPIClient, SteamAPIError
+from steamreviews.api import SteamAPIClient, SteamAPIError, SteamValidationError
+from steamreviews.results import FetchOutcome
 from steamreviews.storage import ReviewStorageProtocol, SQLiteStorage
 
 logger = logging.getLogger(__name__)
@@ -28,16 +29,17 @@ class SteamReviewScraper:
             self.storage = SQLiteStorage(data_dir=data_dir if data_dir else "data")
         self.run_id: str = ""
 
-    async def fetch_all_reviews(self, app_id: int, request_params: dict[str, str]) -> bool:
+    async def fetch_all_reviews(self, app_id: int, request_params: dict[str, str]) -> FetchOutcome:
         """
         Fetches all reviews for a given AppID, handling pagination and rate limits.
         Uses SQLite for incremental caching.
-        Returns True if successful.
+        Returns download outcome metadata, including partial-run detection.
         """
         cursor = "*"
-        num_reviews_expected = None
+        num_reviews_expected: int | None = None
         offset = 0
         pbar = None
+        failure_reason: str | None = None
 
         self.run_id = str(uuid.uuid4())
 
@@ -60,8 +62,14 @@ class SteamReviewScraper:
                     try:
                         response = await self.api.get_reviews(app_id, cursor, request_params)
                     except SteamAPIError as e:
-                        logger.error(f"API Error during fetch: {e}")
-                        return False
+                        failure_reason = f"API error during fetch: {e}"
+                        logger.error(failure_reason)
+                        break
+
+                    if response.success != 1:
+                        failure_reason = f"Steam API returned success={response.success} for app_id={app_id}"
+                        logger.error("%s. Aborting download.", failure_reason)
+                        break
 
                     # First batch - initialize progress bar
                     if num_reviews_expected is None and response.query_summary:
@@ -87,13 +95,29 @@ class SteamReviewScraper:
                         break
 
                     cursor = response.cursor
+        except SteamCursorLoopError as e:
+            failure_reason = f"Infinite pagination loop detected: {e}"
+            logger.error(failure_reason)
         finally:
             if pbar:
                 pbar.close()
 
         final_count = self.storage.get_review_count(app_id)
         logger.info(f"[appID = {app_id}] Total downloaded in cache: {final_count}")
-        return True
+
+        if failure_reason is None:
+            return FetchOutcome(
+                complete=True,
+                downloaded_count=offset,
+                expected_total=num_reviews_expected,
+            )
+
+        return FetchOutcome(
+            complete=False,
+            downloaded_count=offset,
+            expected_total=num_reviews_expected,
+            failure_reason=failure_reason,
+        )
 
     async def fetch_reviews_stream(self, app_id: int, request_params: dict[str, str]):
         """
@@ -118,6 +142,9 @@ class SteamReviewScraper:
 
                 # We don't catch exceptions here. They bubble up to the consumer (e.g. Edge Function)
                 response = await self.api.get_reviews(app_id, cursor, request_params)
+
+                if response.success != 1:
+                    raise SteamValidationError(f"Steam API returned success={response.success} for app_id={app_id}")
 
                 if response.query_summary:
                     self.storage.save_query_summary(app_id, response.query_summary.model_dump())

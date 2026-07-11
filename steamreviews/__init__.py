@@ -7,10 +7,14 @@ from .api import (
     SteamValidationError,
 )
 from .export import fetch_reviews, process_reviews, save_to_excel
+from .results import ExportOnceResult, FetchOutcome, FetchReviewsResult
 from .scraper import SteamCursorLoopError, SteamReviewScraper
 from .storage import MemoryStorage, NullStorage, ReviewStorageProtocol, SQLiteStorage
 
 __all__ = [
+    "ExportOnceResult",
+    "FetchOutcome",
+    "FetchReviewsResult",
     "MemoryStorage",
     "NullStorage",
     "ReviewStorageProtocol",

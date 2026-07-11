@@ -1,60 +1,101 @@
 # Steam Review Exporter Release Notes
 
-## v2.0.2 (KPMG Audit Remediation)
+## v2.0.3
 
-Dieses Release behebt die Befunde aus dem KPMG-style Code-Audit und härtet die Stabilität der Datenbank, des Pydantic-Modells sowie der HTTP-Fehlerklassifizierung.
+This release improves stability, error handling, and CLI behavior. Day-to-day CLI usage stays largely the same; developers using the Python library directly should read the notes under **Library users** below.
 
-### 🛠️ Fehlerbehebungen & System-Härtung
+### 🛠️ Bug fixes & hardening
 
-- **HTTP-Fehlerklassifizierung (AUD-06):** Einführung der Exception `SteamNotFoundError`. Der Client unterscheidet nun zwischen einer echten Nicht-Existenz eines App-IDs (HTTP 404) und allgemeinen temporären Serverfehlern (5xx), anstatt alles als Dienst-Unerreichbarkeit zu behandeln.
-- **SQLite Concurrency & WAL-Modus (AUD-07):** SQLite wird nun standardmäßig im Write-Ahead-Logging-Modus (WAL) initialisiert (`PRAGMA journal_mode=WAL;`). Dies erhöht den parallelen Durchsatz bei Lese- und Schreibvorgängen drastisch und verringert das Risiko von `database is locked`-Fehlern in Multi-Thread-Szenarien.
-- **Pydantic-Modell Resilienz (AUD-08):** Härtung des `SteamReviewAuthor`-Modells durch Deklaration aller sekundären Metadaten-Attribute als optional (`int | None = None`). Dies verhindert Validierungsabstürze, falls Valve Felder im API-Payload unangekündigt entfernt oder ändert.
-- **Konfigurierbare Export-Schwellenwerte (AUD-10):** Die Limits `EXPORT_MEMORY_WARNING_ROWS` und `MAX_EXCEL_DATA_ROWS` können nun dynamisch über die Umgebungsvariablen `STEAM_EXPORT_WARN_ROWS` und `STEAM_EXPORT_MAX_ROWS` konfiguriert werden.
-- **Datenbank-Schema-Migration:** Automatische Migration veralteter SQLite-Tabellenstrukturen. Fehlt die Spalte `params_hash` in der Tabelle `cursors` (z. B. nach einem Upgrade von Version 1.x), wird die Tabelle automatisch zurückgesetzt und neu angelegt.
+- **Reviews without `recommendationid`:** The SQLite cache skips reviews without a valid `recommendationid` instead of crashing with `KeyError`.
+- **Pydantic `recommendationid`:** Integer values from the Steam API are reliably coerced to `str`.
+- **Steam API `success` flag:** The scraper treats `success != 1` as a failure and stops pagination loops cleanly via `SteamCursorLoopError`.
+- **Dynamic User-Agent:** The HTTP client sends a versioned User-Agent string from package metadata.
+- **Excel injection protection:** `sanitize_excel_text` blocks tab characters and formula injection (`=`, `+`, `-`, `@`) in exported cells.
+- **Partial downloads:** Interrupted Steam downloads still process cached reviews; the CLI reports this state with exit code `3`.
+- **Separate directories:** `--cache-dir` controls the SQLite cache; `--output-dir` controls only the Excel export (the library previously tied both to `output_dir`).
 
-### 📦 Abhängigkeiten & Tools
+### 📦 Dependencies & tooling
 
-- Alle internen lock-Abhängigkeiten in `uv.lock` wurden auf den allerneuesten Stand gehoben (u.a. `polars v1.42.0`, `ruff v0.15.20`, `mypy v2.1.0` und `rich v15.0.0`).
-- Behebung von neuen Linter-Warnungen, die durch das Upgrade von Ruff aufgedeckt wurden.
+- **Language detection:** Replaced `langdetect` with `lingua-language-detector` (`steamreviews/language_detection.py`); the thread lock is no longer needed.
+- **Dependency pinning:** Added upper version bounds for runtime and dev dependencies in `pyproject.toml`.
+- **Renovate:** Added schedule, grouping, and automerge for patch updates in `renovate.json`.
+- **CI:** Added Python **3.13** to the test matrix; added a `pip-audit` step for known CVEs.
+
+### 📚 Documentation
+
+- README and Developer Guide document `--cache-dir`, exit codes (`0`–`3`), and the updated library API with `FetchReviewsResult`.
+- Updated skills (`cli-export`, `steam-api`) to match the new behavior.
+
+### ⚠️ Library users
+
+- `fetch_reviews()` now returns `FetchReviewsResult` with `.reviews` and `.outcome` instead of a direct iterable.
+- The library parameter `output_dir` has been renamed to `cache_dir`.
 
 ### 🧪 Tests
-- Zusätzliche Unit-Tests für die HTTP-Fehlercodes (404/400), WAL-Modus-Aktivierung, optionale Pydantic-Felder, Umgebungsvariablen-Steuerung sowie die automatische DB-Schema-Migration. Die Testabdeckung beträgt nun **90.73%** bei 53 bestandenen Tests.
+
+- 21 new or extended tests (including partial-download exit code, language detection, scraper error paths, and cache/output directory separation).
+- Test coverage is **94%** with **74** passing tests (excluding integration).
+
+---
+
+## v2.0.2
+
+This release fixes bugs and hardens database stability, Pydantic models, and HTTP error classification.
+
+### 🛠️ Bug fixes & hardening
+
+- **HTTP error classification:** Introduced `SteamNotFoundError`. The client now distinguishes a genuinely missing App ID (HTTP 404) from general temporary server errors (5xx) instead of treating everything as service unavailability.
+- **SQLite concurrency & WAL mode:** SQLite is now initialized in Write-Ahead Logging mode by default (`PRAGMA journal_mode=WAL;`). This improves parallel read/write throughput and reduces `database is locked` errors in multi-threaded scenarios.
+- **Pydantic model resilience:** Hardened `SteamReviewAuthor` by declaring all secondary metadata attributes as optional (`int | None = None`). This prevents validation crashes when Valve removes or changes fields in the API payload without notice.
+- **Configurable export thresholds:** `EXPORT_MEMORY_WARNING_ROWS` and `MAX_EXCEL_DATA_ROWS` can now be set via the `STEAM_EXPORT_WARN_ROWS` and `STEAM_EXPORT_MAX_ROWS` environment variables.
+- **Database schema migration:** Automatic migration of outdated SQLite table structures. If the `params_hash` column is missing from the `cursors` table (e.g. after upgrading from 1.x), the table is reset and recreated automatically.
+
+### 📦 Dependencies & tooling
+
+- Updated all locked dependencies in `uv.lock` (including `polars v1.42.0`, `ruff v0.15.20`, `mypy v2.1.0`, and `rich v15.0.0`).
+- Fixed new linter warnings surfaced by the Ruff upgrade.
+
+### 🧪 Tests
+
+- Added unit tests for HTTP error codes (404/400), WAL mode activation, optional Pydantic fields, environment variable overrides, and automatic DB schema migration. Test coverage is now **90.73%** with 53 passing tests.
 
 ---
 
 ## v2.0.1 (Architecture Remediation & Web-Readiness)
 
-Dieses Release behebt primär kritische konzeptionelle Fehler und Flaschenhälse, die in der Version `v2.0.0` aufgetreten sind. Die Änderungen stellen sicher, dass die Architektur nicht nur für das CLI fehlerfrei und robust läuft, sondern auch sauber in externe Web- und Edge-Technologien integriert werden kann.
+This release addresses critical conceptual issues and bottlenecks introduced in `v2.0.0`. The changes ensure the architecture runs reliably for the CLI and integrates cleanly into external web and edge environments.
 
-### 🛠️ Critical Bug Fixes & Hotfixes
+### 🛠️ Critical bug fixes & hotfixes
 
-- **API Retry Loop & Hangs:** Es wurde ein Problem behoben, bei dem das CLI endlos hängen bleiben konnte, wenn Rate-Limits (HTTP 429/500+) auftraten. Es greift nun ein hartes Limit (`MAX_RETRIES = 5`) mit sauberem Exponential Backoff.
-- **SQLite DB Locking (Windows):** Ein schwerer Bug wurde behoben, bei dem offene SQLite-Datenbankverbindungen unter Windows Dateisystem-Sperren verursachten.
-- **Run Isolation & Cache Context Mixing:** Das Cache-Verhalten wurde korrigiert, um Export-Vermischungen bei unterschiedlichen Filter-Läufen zu verhindern.
-- **Infinite Loop Protection:** Der Paginierungs-Loop-Schutz wurde komplett überarbeitet. Cursors werden nun sicher über einen SHA256-Hash der Request-Parameter getrackt. So werden fehlerhafte Steam-Paginierungen sofort über einen `SteamCursorLoopError` abgebrochen.
+- **API retry loop & hangs:** Fixed a case where the CLI could hang indefinitely on rate limits (HTTP 429/500+). A hard limit (`MAX_RETRIES = 5`) with exponential backoff now applies.
+- **SQLite DB locking (Windows):** Fixed a severe bug where open SQLite connections caused filesystem locks on Windows.
+- **Run isolation & cache context mixing:** Corrected cache behavior to prevent export mixing across different filter runs.
+- **Infinite loop protection:** Reworked pagination loop protection. Cursors are now tracked via a SHA256 hash of request parameters, so faulty Steam pagination is stopped immediately via `SteamCursorLoopError`.
 
-### 🏗️ Konzeptionelle Architektur-Korrekturen
+### 🏗️ Architectural corrections
 
-- **Dependency Inversion (Storage-Abstraktion):** Die harte Kopplung an SQLite war ein architektonischer Fehler für zustandslose Umgebungen. SQLite wurde hinter ein `ReviewStorageProtocol` abstrahiert. Zusätzlich wurden `MemoryStorage` und `NullStorage` für Edge/Web-Szenarien implementiert.
-- **Asynchrones Streaming:** Statt riesige Datenmengen auf einmal im RAM zu sammeln, stellt der `SteamReviewScraper` jetzt `fetch_reviews_stream()` bereit. Dies ermöglicht echtes Chunking/Streaming an Frontends ohne Timeouts.
-- **Leichtgewichtiger Core:** Schwere Abhängigkeiten (`polars` und `xlsxwriter`) wurden konsequenterweise in die `[project.optional-dependencies]` ausgelagert, um den Footprint in Microservices zu minimieren.
+- **Dependency inversion (storage abstraction):** Hard coupling to SQLite was an architectural problem for stateless environments. SQLite is now behind a `ReviewStorageProtocol`, with `MemoryStorage` and `NullStorage` added for edge/web scenarios.
+- **Async streaming:** Instead of collecting large datasets in RAM, `SteamReviewScraper` now exposes `fetch_reviews_stream()` for true chunking/streaming to frontends without timeouts.
+- **Lightweight core:** Heavy dependencies (`polars` and `xlsxwriter`) were moved to `[project.optional-dependencies]` to reduce the footprint in microservices.
 
-### 🛡️ Web-Kompatibilität & Error Handling
+### 🛡️ Web compatibility & error handling
 
-- **Exakte Exception-Hierarchie:** Statt Fehler stillschweigend mit `None` zu quittieren, werden nun saubere Errors geworfen (`SteamRateLimitError`, `SteamUnavailableError`, `SteamValidationError`). Diese können von Web-APIs direkt in HTTP-Statuscodes (z.B. 429, 503) gemappt werden.
-- **Fail-Fast Rate Limiting:** Über das neue Flag `raise_on_rate_limit` im `SteamAPIClient` kann konfiguriert werden, ob der Scraper sich schlafen legt (CLI) oder sofort abbricht (Edge Function).
+- **Explicit exception hierarchy:** Instead of silently returning `None`, the client now raises clear errors (`SteamRateLimitError`, `SteamUnavailableError`, `SteamValidationError`) that web APIs can map directly to HTTP status codes (e.g. 429, 503).
+- **Fail-fast rate limiting:** The new `raise_on_rate_limit` flag on `SteamAPIClient` lets callers choose between sleeping on rate limits (CLI) or failing immediately (edge functions).
 
-### 🧪 Quality Gates & Tests
+### 🧪 Quality gates & tests
 
-- **Test-Coverage & Linter:** Alle Tests wurden repariert und massiv erweitert (insbesondere für Exception-Passthroughs und den asynchronen Stream). Die Test-Coverage stieg von 54% auf knapp 90%. Alle `ruff` und `mypy` Fehler wurden restlos eliminiert.
+- **Test coverage & linting:** Repaired and significantly expanded tests (especially exception passthrough and async streaming). Coverage rose from 54% to nearly 90%. All `ruff` and `mypy` issues were resolved.
 
-### 🔧 Upgrade Guide für Nutzer
+### 🔧 Upgrade guide
 
-Für bestehende Nutzer des **CLI-Tools** ändert sich nichts an der Bedienung.
-Wer das Projekt **als Bibliothek** nutzen möchte, installiert nun zielgerichtet:
+Nothing changes for existing **CLI** users.
+
+Library users should install explicitly:
+
 ```bash
-pip install steamreviews         # Für den schlanken, Web-Ready Core
-pip install steamreviews[cli]    # Inklusive Polars und Excel-Support
+pip install steamreviews         # Lean, web-ready core
+pip install steamreviews[cli]    # Includes Polars and Excel support
 ```
 
 

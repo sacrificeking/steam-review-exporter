@@ -8,7 +8,7 @@ This project helps you to download Steam reviews for any game and export them di
 
 -   **Download Reviews**: Fetch reviews for any Steam AppID.
 -   **Excel Export**: Automatically saves reviews to a structured `.xlsx` file.
--   **Smart Language Filtering**: Uses metadata and content analysis to ensure accurate language results (fixes common Steam API issues).
+-   **Smart Language Filtering**: Uses Steam metadata plus `lingua` content analysis to ensure accurate language results (fixes common Steam API issues).
 -   **Filtering**: Sort by "Helpful", "Funny", "Recent", or "Updated".
 -   **Interactive Mode**: Simple step-by-step prompts to guide you through the process.
 -   **Robust Validation**: Checks inputs automatically to prevent errors (powered by Pydantic).
@@ -30,7 +30,11 @@ This project helps you to download Steam reviews for any game and export them di
     -   Right-click in the empty space of the folder window and select "Open Terminal here" or "Open PowerShell window here".
 
 3.  **Install Dependencies**:
-    Run this command to install the necessary libraries:
+    Run this command to install the CLI with Excel export support:
+    ```bash
+    python -m pip install .[cli]
+    ```
+    For library-only use without Excel export:
     ```bash
     python -m pip install .
     ```
@@ -81,66 +85,101 @@ Available options:
 -   `--filter`: One of `all`, `funny`, `recent`, or `updated`.
 -   `--min-len`: Minimum review length in characters.
 -   `--max-len`: Maximum review length in characters.
+-   `--cache-dir`: Directory for the SQLite review cache. Defaults to `./data`.
 -   `--output-dir`: Directory for the Excel export.
 -   `--verbose`: Enable debug logging.
 
+Exit codes:
+
+-   `0`: Export completed successfully.
+-   `1`: Export failed or no reviews were found.
+-   `2`: Invalid CLI configuration.
+-   `3`: Excel was written from a partial/incomplete Steam download.
+
 ---
 
-### 2. Python Library (Advanced)
-You can use the underlying `steamreviews` package in your own Python scripts, just like in the original project.
+### 3. Python Library (Advanced)
+You can use the underlying `steamreviews` package in your own Python scripts.
 
-> **Note**: The Steam API is rate-limited. You should be able to download about 10 reviews per second.
+> **Note**: The Steam API is rate-limited. Expect roughly 10 reviews per second.
+
+Install the library:
+
+```bash
+python -m pip install .          # Core library (async API client + scraper)
+python -m pip install .[cli]     # Adds Polars + Excel export helpers
+```
 
 #### Download reviews for one AppID
 ```python
-import steamreviews
+import asyncio
 
-app_id = 588650 # Dead Cells
-review_dict, query_count = steamreviews.download_reviews_for_app_id(app_id)
+from steamreviews import MemoryStorage, SteamReviewScraper
+
+async def main() -> None:
+    scraper = SteamReviewScraper(storage=MemoryStorage())
+    request_params = {"json": "1", "num_per_page": "100", "language": "english"}
+    await scraper.fetch_all_reviews(588650, request_params)
+    reviews = list(scraper.storage.load_run_reviews(scraper.run_id, 588650))
+    print(f"Downloaded {len(reviews)} reviews")
+
+asyncio.run(main())
 ```
 
-#### Process a batch of AppIDs
+#### Stream reviews batch by batch
 ```python
-import steamreviews
+import asyncio
 
-app_ids = [329070, 573170]
-steamreviews.download_reviews_for_app_id_batch(app_ids)
+from steamreviews import NullStorage, SteamReviewScraper
+
+async def main() -> None:
+    scraper = SteamReviewScraper(storage=NullStorage())
+    request_params = {"json": "1", "num_per_page": "100", "filter": "recent"}
+    async for batch in scraper.fetch_reviews_stream(588650, request_params):
+        print(f"Received batch of {len(batch)} reviews")
+
+asyncio.run(main())
 ```
 
-#### Advanced Filtering
-You can pass specific request parameters to filter reviews by language, sentiment, or time range.
-
-**Example: Download recent positive reviews**
+#### Download, filter, and export to Excel
 ```python
-import steamreviews
+import asyncio
 
-request_params = dict()
-# Reference: https://partner.steamgames.com/doc/store/localization#supported_languages
-request_params['language'] = 'english'
-request_params['review_type'] = 'positive' # or 'negative', 'all'
-request_params['purchase_type'] = 'steam' # or 'non_steam_purchase'
+from steamreviews.export import fetch_reviews, process_reviews, save_to_excel
 
-app_id = 588650
-review_dict, query_count = steamreviews.download_reviews_for_app_id(
-    app_id,
-    chosen_request_params=request_params
-)
+async def main() -> None:
+    result = await fetch_reviews(
+        app_id=588650,
+        language="english",
+        filter_type="recent",
+        min_len=100,
+        cache_dir="data",
+    )
+    reviews = result.reviews
+    if result.outcome.partial:
+        print("Warning: export is based on a partial download")
+    df = process_reviews(reviews, app_id=588650)
+    save_to_excel(df, 588650, "Dead Cells", "english", filter_type="recent", min_len=100)
+
+asyncio.run(main())
 ```
 
-**Example: Download reviews from the last 28 days**
+#### Advanced Steam API parameters
+Pass Steam request parameters directly to the scraper:
+
 ```python
-import steamreviews
-
-request_params = dict()
-request_params['filter'] = 'recent' # or 'updated', 'all' (helpful)
-request_params['day_range'] = '28'
-
-app_id = 588650
-review_dict, query_count = steamreviews.download_reviews_for_app_id(
-    app_id,
-    chosen_request_params=request_params
-)
+request_params = {
+    "json": "1",
+    "num_per_page": "100",
+    "language": "english",
+    "review_type": "positive",      # positive, negative, or all
+    "purchase_type": "steam",       # steam or non_steam_purchase
+    "filter": "recent",             # all, recent, updated
+    "day_range": "28",
+}
 ```
+
+Reference: [Steam Partner Documentation](https://partner.steamgames.com/doc/store/localization#supported_languages)
 
 ## Troubleshooting
 

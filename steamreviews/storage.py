@@ -103,11 +103,24 @@ class SQLiteStorage:
         if not reviews:
             return
 
+        data_to_insert: list[tuple[int, str, str]] = []
+        run_data: list[tuple[str, int, str]] = []
+        for review in reviews:
+            recommendation_id = review.get("recommendationid")
+            if recommendation_id is None:
+                logger.warning("Skipping review without recommendationid for app_id=%s", app_id)
+                continue
+            recommendation_id_str = str(recommendation_id)
+            data_to_insert.append((app_id, recommendation_id_str, json.dumps(review)))
+            run_data.append((run_id, app_id, recommendation_id_str))
+
+        if not data_to_insert:
+            return
+
         conn = sqlite3.connect(self.db_path)
         try:
             with conn:
                 cursor = conn.cursor()
-                data_to_insert = [(app_id, str(r["recommendationid"]), json.dumps(r)) for r in reviews]
                 cursor.executemany(
                     """
                     INSERT OR REPLACE INTO reviews (app_id, recommendationid, data_json)
@@ -115,8 +128,6 @@ class SQLiteStorage:
                 """,
                     data_to_insert,
                 )
-
-                run_data = [(run_id, app_id, str(r["recommendationid"])) for r in reviews]
                 cursor.executemany(
                     """
                     INSERT OR IGNORE INTO run_reviews (run_id, app_id, recommendationid)
